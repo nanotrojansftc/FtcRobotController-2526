@@ -28,8 +28,11 @@ import java.util.List;
 public class TeleOpMainMC extends LinearOpMode {
     colorsensors bench ;
     colorsensors.DetectedColor left;
-    colorsensors.rightcolor right;
-    colorsensors.backcolor back;
+    colorsensors.DetectedColor right;
+    colorsensors.DetectedColor back;
+    float lefthue ;
+    float righthue;
+    float backhue;
 
     private controls_top control;
     private resources_top resources;
@@ -84,17 +87,15 @@ public class TeleOpMainMC extends LinearOpMode {
 
         waitForStart();
 
-        Thread lsControlThread = new Thread(new lsControl());
-        Thread liftThread = new Thread(new lift());
-        Thread armThread = new Thread(new arm());
+        Thread intakeControlThread = new Thread(new intakeControl());
+        Thread shootThread = new Thread(new shooting());
         Thread limelightThread = new Thread(new limelight());
 
 
         //Start 2  threads
         //baseControlThread.start();
-        lsControlThread.start();
-        armThread.start();
-        liftThread.start();
+        intakeControlThread.start();
+        shootThread.start();
         limelightThread.start();
 
         //base control thread, let's use road runner's base control which has breaks
@@ -107,16 +108,80 @@ public class TeleOpMainMC extends LinearOpMode {
 
 
 
-    private class lsControl implements Runnable {
+    private class intakeControl implements Runnable {
         boolean clawClosed = false;
 
         @Override
         public void run() {
             waitForStart();
+
+
             while (!Thread.interrupted() && opModeIsActive()) {
-                // LINEAR SLIDES STUFF - usually right stick
-                double intake = gamepad2.left_stick_y;
-                resources.intake.setPower(intake);
+
+
+                lefthue = bench.getHueValue(bench.left,telemetry);
+                righthue = bench.getHueValue(bench.right,telemetry);
+                backhue = bench.getHueValue(bench.back,telemetry);
+
+                telemetry.addData("Left color", "%s, Hue=%.2f" , bench.detectByHue(lefthue, telemetry),lefthue);
+                telemetry.addData("Right color", "%s,Hue=%.2f" ,bench.detectByHue(righthue, telemetry),righthue);
+                telemetry.addData("Back color", "%s,Hue=%.2f" , bench.detectByHue(backhue, telemetry),backhue);
+                telemetry.addLine("Detecting color");
+                telemetry.update();
+
+
+                if(bench.detectByHue(bench.back,telemetry) == colorsensors.DetectedColor.UNKNOWN)
+                {
+                    // LINEAR SLIDES STUFF - usually right stick
+                    double intake = gamepad2.left_stick_y;
+                    resources.intake.setPower(intake);
+                    while(bench.detectByHue(bench.back,telemetry) != colorsensors.DetectedColor.UNKNOWN)
+                    {
+                           if(!(bench.detectByHue(bench.back,telemetry) != colorsensors.DetectedColor.UNKNOWN
+                            && bench.detectByHue(bench.right,telemetry) != colorsensors.DetectedColor.UNKNOWN
+                            && bench.detectByHue(bench.left,telemetry) != colorsensors.DetectedColor.UNKNOWN))
+                           {
+                              rotate();
+                              sleep(500);
+                              if(bench.detectByHue(bench.back,telemetry) == colorsensors.DetectedColor.UNKNOWN)
+                                  break;
+                              else
+                              {
+                                  rotate();
+
+                                      sleep(500);
+                                  if(bench.detectByHue(bench.back,telemetry) == colorsensors.DetectedColor.UNKNOWN)
+
+                                      break;
+                                  else
+                                  {
+                                      rotate();
+                                      sleep(500);
+                                  }
+                                  break;
+
+                              }
+
+                           }
+                           break;
+
+                    }
+                    resources.intake.setPower(0);
+                }
+
+
+                if(bench.detectByHue(bench.back,telemetry) != colorsensors.DetectedColor.UNKNOWN )
+                {
+//                    if(!(bench.detectByHue(bench.back,telemetry) != colorsensors.DetectedColor.UNKNOWN
+//                            && bench.detectByHue(bench.right,telemetry) != colorsensors.DetectedColor.UNKNOWN
+//                            && bench.detectByHue(bench.left,telemetry) != colorsensors.DetectedColor.UNKNOWN))
+//                    {
+//                        rotate();
+//
+//                    }
+                    resources.intake.setPower(0);
+                }
+
                 //resources.lsLeft.setPower(-lspower);
 
                 // HORIZONTAL CONTROL STUFF - usually left stick
@@ -130,7 +195,7 @@ public class TeleOpMainMC extends LinearOpMode {
 
 
 
-    public class arm implements Runnable{
+    public class shooting implements Runnable{
         @Override
         public void run() {
 
@@ -166,26 +231,6 @@ public class TeleOpMainMC extends LinearOpMode {
                 if (gamepad2.x){
                      rotate();
                 }
-            }
-        }
-    }
-
-    //done with intake lift
-    public class lift implements Runnable {
-        @Override
-        public void run() {
-
-            waitForStart();
-
-            while (!Thread.interrupted() && opModeIsActive()) {
-                left = bench.getDetectedColor(telemetry);
-                right = bench.getrightcolor(telemetry);
-                back = bench.getbackcolor(telemetry);
-
-                telemetry.addData("Left color", left);
-                telemetry.addData("Right color", right);
-                telemetry.addData("Back color", back);
-                telemetry.update();
 
                 if (gamepad2.a) {
                     //if(left== colorsensors.DetectedColor.GREEN )
@@ -203,9 +248,30 @@ public class TeleOpMainMC extends LinearOpMode {
                     //}
                 }
 
+//                if(bench.detectByHue(bench.back,telemetry) == colorsensors.DetectedColor.UNKNOWN)
+//                {
+//                    // LINEAR SLIDES STUFF - usually right stick
+//                    double intake = gamepad2.left_stick_y;
+//                    resources.intake.setPower(intake);
+//                }
 
+                //this is for auto rotate when there is an empty space available, always move the empty
+                // space to the front, this code can cause problem as well, you can also
+                // disable this code and manually rotate
+//                if(bench.detectByHue(bench.back,telemetry) != colorsensors.DetectedColor.UNKNOWN )
+//                {
+//                    sleep(1000);
+//                    if(bench.detectByHue(bench.back,telemetry) == colorsensors.DetectedColor.UNKNOWN
+//                            || bench.detectByHue(bench.right,telemetry) == colorsensors.DetectedColor.UNKNOWN
+//                            || bench.detectByHue(bench.left,telemetry) == colorsensors.DetectedColor.UNKNOWN)
+//                    {
+//                        rotate();
+//                        sleep(500);
+//
+//                    }
+//                    //resources.intake.setPower(0);
+//                }
             }
-
         }
     }
 
@@ -250,67 +316,74 @@ public class TeleOpMainMC extends LinearOpMode {
         }
     }
 
+
     private void shootleft()
     {
         resources.lgun.setPower(1);
-        sleep(500);
+        sleep(800);    //spin the ball for a while
         resources.llift.setPosition(0.625);
         sleep(300);
         resources.lgun.setPower(0);
         resources.llift.setPosition(1);
+        sleep(500);
     }
 
     private void shootright()
     {
         resources.rgun.setPower(-1);
-        sleep(500);
+        sleep(800);//spin the ball for a while
         resources.rlift.setPosition(0.3);
         sleep(300);
         resources.rlift.setPosition(0.005);
-        //sleep(300);
+
         resources.rgun.setPower(0);
+        sleep(500);
     }
 
     private void rotate()
     {
         if (carousel ==2){
             carousel =0;
-            resources.rspin.setPower(1);
-            sleep(475);
-            resources.rspin.setPower(0);
+            resources.lspin.setPower(-1);
+            sleep(474);
+            resources.lspin.setPower(0);
         }
         else if (carousel ==1){
             carousel +=1;
-            resources.lspin.setPower(1);
-            sleep(475);
-            resources.lspin.setPower(0);
+            resources.rspin.setPower(-1);
+            sleep(474);
+            resources.rspin.setPower(0);
         }
         else if (carousel ==0){
             carousel +=1;
-            resources.fspin.setPower(1);
-            sleep(475);
+            resources.fspin.setPower(-1);
+            sleep(474);
             resources.fspin.setPower(0);
         }
     }
 
     private void shootgreen()
     {
-        if(bench.getDetectedColor(telemetry) == colorsensors.DetectedColor.GREEN)
+
+//        telemetry.addData("shootgreen - left launcher: ", bench.detectByHue(bench.left,telemetry) );
+//        telemetry.addData("shootgreen - right launcher: ", bench.detectByHue(bench.right,telemetry) );
+        if(bench.detectByHue(bench.left,telemetry) == colorsensors.DetectedColor.GREEN)
             shootleft();
-        else if(bench.getrightcolor(telemetry) == colorsensors.rightcolor.GREEN)
+        else if(bench.detectByHue(bench.right,telemetry) == colorsensors.DetectedColor.GREEN)
             shootright();
         else   //rotate
         {
             //rotate();
             //sleep(200);
         }
+        //shootleft();
     }
 
     private void shootpurple()
     {
-        if(bench.getDetectedColor(telemetry) == colorsensors.DetectedColor.PURPLE)
+        if(bench.detectByHue(bench.left,telemetry) == colorsensors.DetectedColor.PURPLE)
             shootleft();
-        else if(bench.getrightcolor(telemetry) == colorsensors.rightcolor.PURPLE)
+        else if(bench.detectByHue(bench.right,telemetry) == colorsensors.DetectedColor.PURPLE)
             shootright();
         else   //rotate
         {

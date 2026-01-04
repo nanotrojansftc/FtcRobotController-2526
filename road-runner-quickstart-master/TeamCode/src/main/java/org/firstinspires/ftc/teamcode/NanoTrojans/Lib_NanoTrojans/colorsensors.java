@@ -1,4 +1,5 @@
 package org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans;
+import com.qualcomm.hardware.lynx.commands.core.LynxFtdiResetQueryResponse;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
 import com.qualcomm.robotcore.hardware.NormalizedRGBA;
@@ -12,22 +13,13 @@ import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.resources_base
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.resources_top;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
+import android.graphics.Color;
 
 public class colorsensors {
-    NormalizedColorSensor left, right, back;
+   public NormalizedColorSensor left, right, back;
 
 
     public enum DetectedColor{
-        GREEN,
-        PURPLE,
-        UNKNOWN
-    }
-    public enum rightcolor{
-        GREEN,
-        PURPLE,
-        UNKNOWN
-    }
-    public enum backcolor{
         GREEN,
         PURPLE,
         UNKNOWN
@@ -50,10 +42,6 @@ public class colorsensors {
         normRed = l.red / l.alpha;
         normGreen = l.green / l.alpha;
         normBlue = l.blue / l.alpha;
-//        telemetry.addLine("Left");
-//        telemetry.addData("red", normRed);
-//        telemetry.addData("green",normGreen);
-//        telemetry.addData("blue", normBlue);
 
         if (normRed < 0.53 && normGreen > 1 && normBlue > 0.83) {
             return DetectedColor.GREEN;
@@ -67,52 +55,119 @@ public class colorsensors {
 
 
     }
-    public rightcolor getrightcolor(Telemetry telemetry) {
+
+      public DetectedColor getrightcolor(Telemetry telemetry) {
 
         NormalizedRGBA r = right.getNormalizedColors();
         float rr, rg, rb;
         rr = r.red / r.alpha;
         rg = r.green / r.alpha;
         rb = r.blue / r.alpha;
-//        telemetry.addLine("Right");
-//        telemetry.addData("red", rr);
-//        telemetry.addData("green", rg);
-//        telemetry.addData("blue", rb);
+
         if (rr < 0.455 && rg > 0.93 && rb > 0.9){
-            return rightcolor.GREEN;
+            return DetectedColor.GREEN;
         }
         else if (rr>0.45 && rg <0.93 && rb >0.9){
-            return rightcolor.PURPLE;
+            return DetectedColor.PURPLE;
         }
         else {
-            return rightcolor.UNKNOWN;
+            return DetectedColor.UNKNOWN;
         }
     }
-    public backcolor getbackcolor(Telemetry telemetry){
+
+
+    public DetectedColor getbackcolor(Telemetry telemetry){
         NormalizedRGBA b = back.getNormalizedColors();
         float br, bg, bb;
         br = b.red / b.alpha;
         bg = b.green / b.alpha;
         bb = b.blue / b.alpha;
-//        telemetry.addLine("front");
-//        telemetry.addData("red", br);
-//        telemetry.addData("green", bg);
-//        telemetry.addData("blue", bb);
-
 
         if (br <0.8 && bg > 1.47 && bb > 1.2){
-            return backcolor.GREEN;
+            return DetectedColor.GREEN;
         }
         else if (br>0.8 && bg <1.4 && bb >1.3){
-            return backcolor.PURPLE;
+            return DetectedColor.PURPLE;
         }
         else {
-            return backcolor.UNKNOWN;
+            return DetectedColor.UNKNOWN;
         }
 
     }
 
+    public DetectedColor detectByHue(NormalizedColorSensor sensor, Telemetry telemetry) {
 
+        NormalizedRGBA c = sensor.getNormalizedColors();
+        DetectedColor result = DetectedColor.UNKNOWN;
+        // Convert normalized RGB (0–1) → 0–255
+        int r = (int)(c.red   * 255);
+        int g = (int)(c.green * 255);
+        int b = (int)(c.blue  * 255);
+
+        float[] hsv = new float[3];
+        Color.RGBToHSV(r, g, b, hsv);
+
+        float hue = hsv[0];        // 0–360
+        float sat = hsv[1];        // 0–1
+        float val = hsv[2];        // 0–1
+
+        // Filter out white / dark
+//        if (sat < 0.3 || val < 0.2) {
+//            result = DetectedColor.UNKNOWN;
+//        }
+//        else
+//        {
+            if (hue >= 149 && hue <= 163) {
+                result = DetectedColor.GREEN;
+                //return DetectedColor.GREEN;
+            } else if (hue >= 165 && hue <= 240) {
+
+                result = DetectedColor.PURPLE;
+                //return DetectedColor.PURPLE;
+            }
+//        }
+//        telemetry.addData("color", "%s, Hue=%.2f, S=%.2f, v=%.2f" , result,hue, sat, val);
+//        telemetry.update();
+        return result;
+        //return DetectedColor.UNKNOWN;
+    }
+
+    public DetectedColor detectByHue(float hue, Telemetry telemetry) {
+
+
+        DetectedColor result = DetectedColor.UNKNOWN;
+        if (hue >= 149 && hue <= 163) {
+            result = DetectedColor.GREEN;
+            //return DetectedColor.GREEN;
+        } else if (hue >= 165 && hue <= 240) {
+
+            result = DetectedColor.PURPLE;
+            //return DetectedColor.PURPLE;
+        }
+
+        return result;
+    }
+
+    public float getHueValue(NormalizedColorSensor sensor, Telemetry telemetry) {
+
+        NormalizedRGBA c = sensor.getNormalizedColors();
+        DetectedColor result = DetectedColor.UNKNOWN;
+        // Convert normalized RGB (0–1) → 0–255
+        int r = (int)(c.red   * 255);
+        int g = (int)(c.green * 255);
+        int b = (int)(c.blue  * 255);
+
+        float[] hsv = new float[3];
+        Color.RGBToHSV(r, g, b, hsv);
+
+        float hue = hsv[0];        // 0–360
+        float sat = hsv[1];        // 0–1
+        float val = hsv[2];        // 0–1
+
+
+        return hue;
+        //return DetectedColor.UNKNOWN;
+    }
 
 
 
