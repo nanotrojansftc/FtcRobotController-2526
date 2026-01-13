@@ -20,6 +20,10 @@ public class resources_top {
     public CRServo rspin = null;
     public CRServo lspin = null;
 
+    public int apriltagvalue =21;
+
+    public int towervalue = 20;
+
 
 
     public resources_top(HardwareMap hardwareMap) {
