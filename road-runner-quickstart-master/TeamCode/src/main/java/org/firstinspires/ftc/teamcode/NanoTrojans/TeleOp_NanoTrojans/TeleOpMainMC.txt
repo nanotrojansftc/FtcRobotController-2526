@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode.NanoTrojans.TeleOp_NanoTrojans;
 
-
+import com.pedropathing.follower.Follower;
+import com.pedropathing.geometry.Pose;
 import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
@@ -8,29 +9,24 @@ import com.qualcomm.hardware.rev.RevHubOrientationOnRobot;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.IMU;
+
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
-
-// --- CORRECTED IMPORTS ---
-import com.pedropathing.follower.Follower;
-import com.pedropathing.geometry.Pose; // This was the broken line
-import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
-
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.controls_top;
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.resources_top;
+import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 import java.util.List;
-
+//ORIGINAL FILE W/out added failsafe for lifting arms
 @TeleOp(name ="TeleOpMainMC", group = "TeleOp")
-public class TeleOpMainMC extends LinearOpMode {
+public class ORINGAL_TELEOPMAINMC extends LinearOpMode {
 
     private colorsensors bench;
     private controls_top control;
     private resources_top resources;
     private Follower follower;
-    public boolean llift_status = false;//False is down, true is up
-    public boolean rlift_status = false;
+
     float lefthue;
     float righthue;
     float backhue;
@@ -94,11 +90,9 @@ public class TeleOpMainMC extends LinearOpMode {
                 lefthue = bench.getHueValue(bench.left, telemetry);
                 righthue = bench.getHueValue(bench.right, telemetry);
                 backhue = bench.getHueValue(bench.back, telemetry);
-                //telemetry.addData("Left color", "%s, Hue=%.2f", bench.detectByHue(lefthue, telemetry), lefthue);
-                //telemetry.addData("Right color", "%s, Hue=%.2f", bench.detectByHue(righthue, telemetry), righthue);
-                //telemetry.addData("Back color", "%s, Hue=%.2f", bench.detectByHue(backhue, telemetry), backhue);
-                telemetry.addData("rightlift", rlift_status);
-                telemetry.addData("leftlift", llift_status);
+                telemetry.addData("Left color", "%s, Hue=%.2f", bench.detectByHue(lefthue, telemetry), lefthue);
+                telemetry.addData("Right color", "%s, Hue=%.2f", bench.detectByHue(righthue, telemetry), righthue);
+                telemetry.addData("Back color", "%s, Hue=%.2f", bench.detectByHue(backhue, telemetry), backhue);
                 telemetry.update();
 
                 if(bench.detectByHue(bench.back, telemetry) == colorsensors.DetectedColor.UNKNOWN) {
@@ -137,22 +131,10 @@ public class TeleOpMainMC extends LinearOpMode {
         public void run() {
             waitForStart();
             while (!Thread.interrupted() && opModeIsActive()) {
-                if (gamepad2.left_trigger > 0) {
-                    resources.llift.setPosition(1);
-                    llift_status = false;
-                }
-                if (gamepad2.left_bumper){
-                    resources.llift.setPosition(0.625);
-                    llift_status= true;
-                }
-                if (gamepad2.right_trigger > 0){
-                    resources.rlift.setPosition(0.005);
-                    rlift_status = false;
-                }
-                if (gamepad2.right_bumper){
-                    resources.rlift.setPosition(0.3);
-                    rlift_status = true;
-                }
+                if (gamepad2.left_trigger > 0) resources.llift.setPosition(1);
+                if (gamepad2.left_bumper) resources.llift.setPosition(0.625);
+                if (gamepad2.right_trigger > 0) resources.rlift.setPosition(0.005);
+                if (gamepad2.right_bumper) resources.rlift.setPosition(0.1);
                 if (gamepad2.dpad_left) resources.lgun.setPower(-1);
                 if (gamepad2.dpad_right) resources.rgun.setPower(1);
                 if (gamepad2.dpad_down) {
@@ -211,17 +193,6 @@ public class TeleOpMainMC extends LinearOpMode {
     }
 
     private void rotate() {
-        if (llift_status){
-            resources.llift.setPosition(1);
-        }
-        if (rlift_status){
-            resources.rlift.setPosition(0.005);
-        }
-        if (llift_status || rlift_status){
-            rlift_status=false;
-            llift_status=false;
-            sleep(300);
-        }
         if (carousel == 2) {
             carousel = 0;
             resources.lspin.setPower(-1);

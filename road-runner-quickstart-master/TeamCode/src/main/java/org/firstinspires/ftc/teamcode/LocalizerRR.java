@@ -6,7 +6,7 @@ import com.acmerobotics.roadrunner.PoseVelocity2d;
 /**
  * Interface for localization methods.
  */
-public interface Localizer {
+public interface LocalizerRR {
     /**
      * Returns the current pose estimate.
      * NOTE: Does not update the pose estimate;

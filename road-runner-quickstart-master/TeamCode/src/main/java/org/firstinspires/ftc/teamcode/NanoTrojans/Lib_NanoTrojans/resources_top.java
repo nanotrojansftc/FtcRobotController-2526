@@ -2,40 +2,38 @@ package org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans;
 
 import com.qualcomm.robotcore.hardware.CRServo;
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 
 public class resources_top {
-    public DcMotor rgun = null;
-    public DcMotor lgun = null;
-    public DcMotor intake = null;
+    public DcMotor lgun;
+    public DcMotor rgun;
+    public DcMotor intake;
+    public Servo llift;
+    public Servo rlift;
+    public CRServo fspin;
+    public CRServo rspin;
+    public CRServo lspin;
 
-
-//    public CRServo rhs = null;
-//    public CRServo lhs = null;
-//    //servo motors
-    public Servo llift = null;
-    public Servo rlift = null;
-    public CRServo fspin = null;
-    public CRServo rspin = null;
-    public CRServo lspin = null;
-
-    public int apriltagvalue =21;
-
-    public int towervalue = 20;
-
-
+    public int apriltagvalue = 0;
+    public int towervalue = 0;
 
     public resources_top(HardwareMap hardwareMap) {
-        lgun = hardwareMap.dcMotor.get("lgun");
-        rgun = hardwareMap.dcMotor.get("rgun");
-        intake = hardwareMap.dcMotor.get("intake");
+        lgun = hardwareMap.get(DcMotor.class, "lgun");
+        rgun = hardwareMap.get(DcMotor.class, "rgun");
+        intake = hardwareMap.get(DcMotor.class, "intake");
+        llift = hardwareMap.get(Servo.class, "llift");
+        rlift = hardwareMap.get(Servo.class, "rlift");
+        fspin = hardwareMap.get(CRServo.class, "fspin");
+        rspin = hardwareMap.get(CRServo.class, "rspin");
+        lspin = hardwareMap.get(CRServo.class, "lspin");
 
-         llift = hardwareMap.servo.get("llift");
-         rlift = hardwareMap.servo.get("rlift");
-         fspin = hardwareMap.crservo.get("fspin");
-         rspin= hardwareMap.crservo.get("rspin");
-         lspin = hardwareMap.crservo.get("lspin");
+        lgun.setDirection(DcMotorSimple.Direction.REVERSE);
+        rgun.setDirection(DcMotorSimple.Direction.REVERSE);
+        intake.setDirection(DcMotorSimple.Direction.REVERSE);
 
+        llift.setPosition(1);
+        rlift.setPosition(0.005);
     }
 }

@@ -15,6 +15,13 @@
 apply from: '../build.common.gradle'
 apply from: '../build.dependencies.gradle'
 
+
+repositories {
+    mavenCentral()
+    google()
+    maven { url = 'https://maven.brott.dev/' }
+}
+
 android {
     namespace = 'org.firstinspires.ftc.teamcode'
 
@@ -27,9 +34,11 @@ android {
 }
 
 repositories {
-    maven {
-        url = 'https://maven.brott.dev/'
-    }
+    mavenCentral()
+    google()
+    maven {url = 'https://maven.brott.dev/'}
+    maven { url = 'https://mymaven.bylazar.com/releases' }
+    maven { url "https://maven.pedropathing.com/releases" }
 }
 
 dependencies {
@@ -38,6 +47,13 @@ dependencies {
     implementation "com.acmerobotics.roadrunner:ftc:0.1.16"
     implementation "com.acmerobotics.roadrunner:core:1.0.1"
     implementation "com.acmerobotics.roadrunner:actions:1.0.1"
-    implementation "com.acmerobotics.dashboard:dashboard:0.4.16"
+//    implementation "com.acmerobotics.dashboard:dashboard:0.4.16"
+    implementation 'com.acmerobotics.dashboard:dashboard:0.5.1'
+    // ADD THESE for Pedro Pathing and Panels
+    implementation 'com.pedropathing:ftc:2.0.5'
+    implementation 'com.pedropathing:telemetry:1.0.0'
+    implementation 'com.bylazar:fullpanels:1.0.12'
+
+
 
 }
