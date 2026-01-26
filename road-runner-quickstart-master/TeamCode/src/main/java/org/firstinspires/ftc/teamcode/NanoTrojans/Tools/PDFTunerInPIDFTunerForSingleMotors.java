@@ -4,39 +4,47 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.util.ElapsedTime;
 
-@TeleOp(name = "PDF Tuner in PIDF Tuner", group = "Tuning")
+@TeleOp(name = "PDF Tuner Fixed (Slot Logic)", group = "Tuning")
 public class PDFTunerInPIDFTunerForSingleMotors extends LinearOpMode {
     private DcMotorEx spindexerMotor;
 
-    // --- STARTING CONSTANTS ---
-    // Note: kP is very sensitive. kF is for friction. kD is for braking.
+    // --- PIDF CONSTANTS ---
     double kP = 0.002;
     double kF = 0.05;
     double kD = 0.000;
 
     // --- VARIABLES ---
     int targetPosition = 0;
-    int ticksPerCompartment = 250; // ~1/3rd rotation for 26.9:1 motor
+
+    // STARTING GUESS for the decimal ticks (Adjustable in Mode 3)
+    double ticksPerCompartment = 250.6;
+
+    // NEW: We track the "Slot" we are in (0, 1, 2, 3...)
+    // This prevents the rounding error from adding up!
+    int currentSlot = 0;
     double lastError = 0;
 
-    // 0=P, 1=F, 2=D
-    int tuningMode = 1; // Start with F (Friction) as it's the first step!
+    // TUNING MODES:
+    // 0 = P (Strength)
+    // 1 = F (Friction)
+    // 2 = D (Braking)
+    // 3 = TICKS (The Magic Number)
+    int tuningMode = 1;
 
     @Override
     public void runOpMode() throws InterruptedException {
 
         // HARDWARE SETUP
-        spindexerMotor = hardwareMap.get(DcMotorEx.class, "spindexer");
+        spindexerMotor = hardwareMap.get(DcMotorEx.class, "spindexer"); // Check if your config is "hood" or "spindexer"
         spindexerMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         spindexerMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         spindexerMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
         // INITIAL TELEMETRY
-        telemetry.addLine("--- SPINDEXER TUNER ---");
-        telemetry.addLine("1. Mount robot safely (wheels off ground if needed)");
-        telemetry.addLine("2. Press START to begin.");
+        telemetry.addLine("--- SPINDEXER TUNER (FIXED) ---");
+        telemetry.addLine("1. Align Spindexer to FRONT (Position 0)");
+        telemetry.addLine("2. Press START.");
         telemetry.update();
 
         waitForStart();
@@ -45,20 +53,21 @@ public class PDFTunerInPIDFTunerForSingleMotors extends LinearOpMode {
 
             // --- 1. CONTROLS ---
 
-            // Switch Mode (Y)
+            // Switch Mode (Y) -> Cycles 0, 1, 2, 3
             if (gamepad1.y) {
                 tuningMode++;
-                if (tuningMode > 2) tuningMode = 0;
+                if (tuningMode > 3) tuningMode = 0;
                 sleep(250);
             }
 
-            // Adjust Values (D-Pad)
+            // Adjust Values (D-Pad Up/Down)
             if (gamepad1.dpad_up || gamepad1.dpad_down) {
                 double direction = gamepad1.dpad_up ? 1 : -1;
 
-                if (tuningMode == 0) kP += (0.0001 * direction);      // Small steps for P
-                else if (tuningMode == 1) kF += (0.005 * direction);  // Medium steps for F
-                else if (tuningMode == 2) kD += (0.00001 * direction); // Tiny steps for D
+                if (tuningMode == 0) kP += (0.0001 * direction);       // Tune P
+                else if (tuningMode == 1) kF += (0.005 * direction);   // Tune F
+                else if (tuningMode == 2) kD += (0.00001 * direction); // Tune D
+                else if (tuningMode == 3) ticksPerCompartment += (0.1 * direction); // Tune Magic Number
 
                 // Prevent negatives
                 kP = Math.max(0, kP);
@@ -67,11 +76,20 @@ public class PDFTunerInPIDFTunerForSingleMotors extends LinearOpMode {
                 sleep(100);
             }
 
-            // Test Movement (A/B)
-            if (gamepad1.a) { targetPosition += ticksPerCompartment; sleep(200); }
-            if (gamepad1.b) { targetPosition -= ticksPerCompartment; sleep(200); }
+            // ROTATE SLOTS (A / B)
+            // This now uses the "Bank Account" logic to fix the 250 vs 251 issue
+            if (gamepad1.a) {
+                currentSlot++;
+                updateTarget();
+                sleep(200);
+            }
+            if (gamepad1.b) {
+                currentSlot--;
+                updateTarget();
+                sleep(200);
+            }
 
-            // --- 2. MATH ---
+            // --- 2. PIDF MATH ---
             int currentPos = spindexerMotor.getCurrentPosition();
             double error = targetPosition - currentPos;
 
@@ -85,42 +103,40 @@ public class PDFTunerInPIDFTunerForSingleMotors extends LinearOpMode {
             power = Math.max(-1.0, Math.min(1.0, power));
             spindexerMotor.setPower(power);
 
-            // --- 3. INSTRUCTIONAL TELEMETRY ---
-
+            // --- 3. TELEMETRY ---
             telemetry.addLine("=== CONTROLS ===");
-            telemetry.addLine("[Y]: Switch Variable (P -> F -> D)");
-            telemetry.addLine("[D-Pad]: Adjust Value");
-            telemetry.addLine("[A] / [B]: Rotate Left / Right");
-            telemetry.addLine(" "); // Spacer
+            telemetry.addLine("[Y]: Change Mode  |  [D-Pad]: Adjust Value");
+            telemetry.addLine("[A/B]: Rotate Slot (+/-)");
+            telemetry.addLine(" ");
 
-            telemetry.addLine("=== CURRENT MODE ===");
+            telemetry.addLine("=== TUNING MODE ===");
             if (tuningMode == 1) {
-                telemetry.addData("EDITING", "kF (Feedforward/Friction)");
+                telemetry.addData(">> EDITING", "F (FRICTION)");
                 telemetry.addData("Value", "%.4f", kF);
-                telemetry.addLine("TIP: Increase until motor *barely* moves/hums.");
-                telemetry.addLine("GOAL: Overcome friction, but don't spin yet.");
-            }
-            else if (tuningMode == 0) {
-                telemetry.addData("EDITING", "kP (Proportional/Strength)");
+            } else if (tuningMode == 0) {
+                telemetry.addData(">> EDITING", "P (STRENGTH)");
                 telemetry.addData("Value", "%.5f", kP);
-                telemetry.addLine("TIP: Increase until it snaps to target.");
-                telemetry.addLine("WARN: If it shakes/oscillates -> DECREASE.");
-            }
-            else if (tuningMode == 2) {
-                telemetry.addData("EDITING", "kD (Derivative/Brake)");
+            } else if (tuningMode == 2) {
+                telemetry.addData(">> EDITING", "D (BRAKE)");
                 telemetry.addData("Value", "%.6f", kD);
-                telemetry.addLine("TIP: Use ONLY if it overshoots/bounces.");
-                telemetry.addLine("WARN: Keep very low. Too high = Gritty noise.");
+            } else if (tuningMode == 3) {
+                telemetry.addData(">> EDITING", "TICKS (MAGIC NUMBER)");
+                telemetry.addData("Value", "%.1f", ticksPerCompartment);
+                telemetry.addLine("Adjust this until 10 rotations land PERFECTLY.");
             }
 
-            telemetry.addLine(" "); // Spacer
-            telemetry.addLine("=== DATA ===");
-            telemetry.addData("Target", targetPosition);
+            telemetry.addLine(" ");
+            telemetry.addData("Slot #", currentSlot);
+            telemetry.addData("Target (Int)", targetPosition);
             telemetry.addData("Actual", currentPos);
             telemetry.addData("Error", error);
-            telemetry.addData("Motor Pwr", "%.2f", power);
-
             telemetry.update();
         }
+    }
+
+    // Helper to calculate the perfect target with rounding
+    private void updateTarget() {
+        double preciseTarget = currentSlot * ticksPerCompartment;
+        targetPosition = (int) Math.round(preciseTarget);
     }
 }

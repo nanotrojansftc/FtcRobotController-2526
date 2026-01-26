@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.NanoTrojans.TeleOp_NanoTrojans;
+package org.firstinspires.ftc.teamcode.NanoTrojans.Tools;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;

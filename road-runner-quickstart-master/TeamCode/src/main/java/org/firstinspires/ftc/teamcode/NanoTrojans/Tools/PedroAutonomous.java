@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.NanoTrojans.Auto_NanoTrojans; // Package declaration
+package org.firstinspires.ftc.teamcode.NanoTrojans.Tools; // Package declaration
 
 // --- IMPORTS ---
 import com.acmerobotics.dashboard.FtcDashboard; // Dashboard for debugging on PC
