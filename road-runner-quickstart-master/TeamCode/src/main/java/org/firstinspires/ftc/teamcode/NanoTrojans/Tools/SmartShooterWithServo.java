@@ -6,143 +6,200 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
 
-@TeleOp(name = "Smart Shooter - Servo Mode", group = "Competition")
+import java.util.List;
+
+@TeleOp(name = "Smart Shooter - 1000ms Memory", group = "Competition")
 public class SmartShooterWithServo extends LinearOpMode {
 
     // --- HARDWARE ---
     private Limelight3A limelight;
-    private DcMotorEx LflywheelMotor;
-    private DcMotorEx RflywheelMotor;
+    private DcMotorEx LflywheelMotor, RflywheelMotor;
     private Servo hoodServo;
 
-    // --- MEASUREMENTS (Same as SmartShooter) ---
+    // --- LOGIC VARIABLES ---
+    private ElapsedTime signalLossTimer = new ElapsedTime();
+    private double lastTargetRPM = 0;       // For display
+    private double lastTargetLeftTicks = 0; // For motor control
+    private double lastTargetRightTicks = 0;
+    private double lastServoPos = 0.5;
+    private boolean hasTargetMemory = false;
+
+    // --- CONSTANTS ---
+    // UPDATED: Increased to 1000ms (1 second) to handle heavy vibration
+    final double FLICKER_THRESHOLD_MS = 1000;
+
+    final double SERVO_LOW_POS  = 0.5;
+    final double SERVO_HIGH_POS = 0.58;
+    final double SERVO_THRESHOLD_DIST = 90.0;
+
+    // --- MEASUREMENTS ---
     final double CAMERA_HEIGHT_INCHES = 16.25;
     final double TAG_HEIGHT_INCHES    = 29.5;
     final double MOUNT_ANGLE_DEGREES  = 10.6;
     final double SHOOTER_HEIGHT       = 17.7;
     final double BASKET_HEIGHT        = 43.0;
-    final double ENTRY_ANGLE          = -45.0; // Keeps original -45 logic
+    final double ENTRY_ANGLE          = -45.0;
+    final double G = 386.1;
 
-    // --- SERVO LOGIC (Your Request) ---
-    final double SERVO_LOW_POS  = 0.5;   // Distance < 90
-    final double SERVO_HIGH_POS = 0.58;  // Distance > 90
-    final double SERVO_THRESHOLD_DIST = 90.0;
-
-    // --- MOTOR CONSTANTS (Same as SmartShooter) ---
     final double FLYWHEEL_TICKS_PER_REV = 28.0;
     final double FLYWHEEL_RADIUS = 1.89;
-    final double SPEED_SCALAR = 3;
+    final double SPEED_SCALAR = 2.8;
 
     @Override
     public void runOpMode() {
+        // --- 0. BATTERY CHECK ---
+        // Get the battery voltage sensor
+        com.qualcomm.robotcore.hardware.VoltageSensor batteryVoltageSensor = hardwareMap.voltageSensor.iterator().next();
+
         // 1. INIT HARDWARE
         limelight = hardwareMap.get(Limelight3A.class, "limelight");
         limelight.pipelineSwitch(0);
         limelight.start();
 
-        // 2. INIT FLYWHEELS (Exact PIDF from SmartShooter)
+        // 2. INIT FLYWHEELS (TUNED FOR CONSISTENCY)
         LflywheelMotor = hardwareMap.get(DcMotorEx.class, "lgun");
         LflywheelMotor.setDirection(DcMotorSimple.Direction.FORWARD);
         LflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        LflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(100, 0, 1.5, 16.45));
+
+        // OLD VALUES: P=100 (Softer), F=16.45 (Fixes overshoot)
+        // NEW VALUES: P=70 (Softer), F=13.5 (Fixes overshoot)
+        PIDFCoefficients tunedPIDF = new PIDFCoefficients(70, 0, 1.5, 13.5);
+
+        LflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, tunedPIDF);
 
         RflywheelMotor = hardwareMap.get(DcMotorEx.class, "rgun");
         RflywheelMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         RflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        RflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(100, 0, 1.5, 16.45));
+        RflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, tunedPIDF);
 
-        // 3. INIT HOOD SERVO
+
         hoodServo = hardwareMap.get(Servo.class, "hood");
-
-        // Logic: "Reset back to .5 on the start"
         hoodServo.setPosition(SERVO_LOW_POS);
 
-        telemetry.addData("Status", "Initialized. Hood Reset to 0.5");
-        telemetry.update();
+        // --- INIT LOOP (Display Voltage While Waiting) ---
+        while (!isStarted() && !isStopRequested()) {
+            double voltage = batteryVoltageSensor.getVoltage();
 
-        waitForStart();
+            telemetry.addData("Status", "Initialized & Ready.");
+            telemetry.addData("Battery Voltage", "%.2f V", voltage);
+
+            // Warning if battery is too low for consistent shooting
+            if (voltage < 12.5) {
+                telemetry.addData("WARNING", "BATTERY LOW! SWAP NOW.");
+            } else {
+                telemetry.addData("Battery Status", "GOOD");
+            }
+
+            telemetry.update();
+        }
+
+        // waitForStart() is handled by the loop above now
+        signalLossTimer.reset();
 
         while (opModeIsActive()) {
             LLResult result = limelight.getLatestResult();
-
+            boolean validResult = (result != null && result.isValid());
             double currentDist = 0;
-            double targetRPM = 0;
-            double leftVelocity = 0;
-            double rightVelocity = 0;
-            String servoStatus = "LOW (0.5)";
+            int tagID = -1;
 
-            if (result != null && result.isValid()) {
-                // --- STEP 1: DISTANCE (Same logic) ---
+            if (validResult) {
+                // --- TARGET FOUND (REFRESH MEMORY) ---
+                signalLossTimer.reset();
+                hasTargetMemory = true;
+
+                // Get Tag ID
+                List<LLResultTypes.FiducialResult> fiducials = result.getFiducialResults();
+                if (!fiducials.isEmpty()) tagID = fiducials.get(0).getFiducialId();
+
+                // Calculate Distance
                 double ty = result.getTy();
                 double angleToGoalRadians = Math.toRadians(MOUNT_ANGLE_DEGREES + ty);
                 currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
 
-                // --- STEP 2: PHYSICS (Same logic) ---
-                double heightY = BASKET_HEIGHT - SHOOTER_HEIGHT;
-                ShotData shot = calculateShot(currentDist, heightY, ENTRY_ANGLE);
+                ShotData shot = calculateShot(currentDist, BASKET_HEIGHT - SHOOTER_HEIGHT, ENTRY_ANGLE);
 
                 if (shot.isPossible) {
-                    // --- STEP 3: SERVO LOGIC (New Request) ---
-                    // "If under 90 inches then lowest (0.5). If over 90 inches, 0.58."
-                    if (currentDist < SERVO_THRESHOLD_DIST) {
-                        hoodServo.setPosition(SERVO_LOW_POS);
-                        servoStatus = "LOW (0.5)";
-                    } else {
-                        hoodServo.setPosition(SERVO_HIGH_POS);
-                        servoStatus = "HIGH (0.58)";
-                    }
+                    // Update Servo Memory
+                    if (currentDist < SERVO_THRESHOLD_DIST) lastServoPos = SERVO_LOW_POS;
+                    else lastServoPos = SERVO_HIGH_POS;
 
-                    // --- STEP 4: FLYWHEEL CONTROL (Same logic) ---
-                    targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
+                    // Update RPM Memory
+                    double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
                     targetRPM *= SPEED_SCALAR;
+                    lastTargetRPM = targetRPM; // Store for telemetry
 
-                    double targetVelocityTicks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
+                    // Calculate Motor Ticks
+                    double ticks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
+                    lastTargetLeftTicks = ticks;
+                    lastTargetRightTicks = ticks;
 
-                    leftVelocity = targetVelocityTicks;
-                    rightVelocity = targetVelocityTicks;
+                    if (currentDist > 120.0) lastTargetLeftTicks *= 1.80;
 
-                    // Boost left motor if over 120 inches (Same logic)
-                    if (currentDist > 120.0) {
-                        leftVelocity *= 1.80;
-                    }
-
-                    LflywheelMotor.setVelocity(leftVelocity);
-                    RflywheelMotor.setVelocity(rightVelocity);
+                    // Apply
+                    hoodServo.setPosition(lastServoPos);
+                    LflywheelMotor.setVelocity(lastTargetLeftTicks);
+                    RflywheelMotor.setVelocity(lastTargetRightTicks);
                 }
-            } else {
-                // Optional: Ensure servo stays low if target lost, or just hold last pos.
-                // Resetting to low is safer to prevent damage if robot drives near walls.
-                hoodServo.setPosition(SERVO_LOW_POS);
+            }
+            else {
+                // --- SIGNAL LOST (USE MEMORY) ---
+                if (signalLossTimer.milliseconds() < FLICKER_THRESHOLD_MS && hasTargetMemory) {
+                    // HOLD LAST VALUES
+                    hoodServo.setPosition(lastServoPos);
+                    LflywheelMotor.setVelocity(lastTargetLeftTicks);
+                    RflywheelMotor.setVelocity(lastTargetRightTicks);
+                } else {
+                    // TIMEOUT EXCEEDED -> RESET
+                    hoodServo.setPosition(SERVO_LOW_POS);
+                    LflywheelMotor.setVelocity(0);
+                    RflywheelMotor.setVelocity(0);
+                    hasTargetMemory = false;
+                    lastTargetRPM = 0; // Clear for display
+                }
             }
 
             // --- TELEMETRY ---
-            double LactualRPM = (LflywheelMotor.getVelocity() * 60) / FLYWHEEL_TICKS_PER_REV;
-            double RactualRPM = (RflywheelMotor.getVelocity() * 60) / FLYWHEEL_TICKS_PER_REV;
+            // Calculate Real-Time RPM from motor velocity (ticks per second)
+            // Formula: (TicksPerSec * 60) / TicksPerRev
+            double currentLeftRPM = (LflywheelMotor.getVelocity() * 60) / FLYWHEEL_TICKS_PER_REV;
+            double currentRightRPM = (RflywheelMotor.getVelocity() * 60) / FLYWHEEL_TICKS_PER_REV;
 
-            telemetry.addData("1. Distance", "%.2f in", currentDist);
-            telemetry.addData("2. Servo Pos", "%s", servoStatus);
-            telemetry.addData("3. Left RPM", "Target: %.0f | Actual: %.0f", targetRPM, LactualRPM);
-            telemetry.addData("4. Right RPM", "Target: %.0f | Actual: %.0f", targetRPM, RactualRPM);
+            telemetry.addData("--- TARGETING ---", "");
+            if (validResult) {
+                telemetry.addData("Status", "LOCKED ON (Tag %d)", tagID);
+                telemetry.addData("Distance", "%.1f in", currentDist);
+            } else if (hasTargetMemory) {
+                telemetry.addData("Status", "MEMORY HOLD (%.0f ms left)", (FLICKER_THRESHOLD_MS - signalLossTimer.milliseconds()));
+            } else {
+                telemetry.addData("Status", "SEARCHING / IDLE");
+            }
+
+            telemetry.addData("--- SHOOTER ---", "");
+            telemetry.addData("Servo Pos", "%.2f", hoodServo.getPosition());
+
+            // UPDATED: Explicit Target vs Actual comparison
+            telemetry.addData("TARGET RPM", "%.0f", lastTargetRPM);
+            telemetry.addData("Actual Left RPM", "%.0f", currentLeftRPM);
+            telemetry.addData("Actual Right RPM", "%.0f", currentRightRPM);
+
             telemetry.update();
         }
         limelight.stop();
     }
 
-    // Exact physics method from SmartShooter
     private ShotData calculateShot(double x, double y, double theta) {
         ShotData data = new ShotData();
         double thetaRad = Math.toRadians(theta);
-
         double term1 = (2 * y) / x;
         double term2 = Math.tan(thetaRad);
-
         double alphaRad = Math.atan(term1 - term2);
         data.launchAngleDegrees = Math.toDegrees(alphaRad);
-
         double cosAlpha = Math.cos(alphaRad);
         double tanAlpha = Math.tan(alphaRad);
         double numerator = G * Math.pow(x, 2);
@@ -157,7 +214,6 @@ public class SmartShooterWithServo extends LinearOpMode {
         return data;
     }
 
-    private static final double G = 386.1;
     private class ShotData {
         public double launchAngleDegrees;
         public double launchVelocityInchesPerSec;

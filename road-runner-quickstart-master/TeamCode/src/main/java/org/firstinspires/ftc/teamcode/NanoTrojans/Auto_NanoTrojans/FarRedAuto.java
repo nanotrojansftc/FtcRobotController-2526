@@ -16,128 +16,191 @@ import com.qualcomm.robotcore.hardware.ColorSensor;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
+
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-@Autonomous(name = "Far Red Auto", group = "Competition")
+/*
+ * ==========================================================================================
+ * NANO TROJANS - FAR RED AUTONOMOUS (TUNED & COMMENTED)
+ * ==========================================================================================
+ * Strategy:
+ * 1. Init: Scan Obelisk & Inventory.
+ * 2. Start: Shoot Pre-load -> Intake Samples (Smart) -> Score -> Repeat.
+ * ==========================================================================================
+ */
+
+@Autonomous(name = "Far Red Auto - Smart", group = "Competition")
 public class FarRedAuto extends LinearOpMode {
 
+    // --- HARDWARE ---
     private Follower follower;
     private Paths paths;
     private DcMotorEx LflywheelMotor, RflywheelMotor;
-
-    // CHANGED: Replaced hoodMotor with hoodServo
     private Servo hoodServo;
-
     private DcMotorEx spindexerMotor;
     private DcMotor intakeMotor;
     private Servo llift, rlift;
     private Limelight3A limelight;
-    private colorsensors bench;
+
+    // --- SENSORS ---
     private ColorSensor intakeSensor;
+    private ColorSensor lgunsensor, rgunsensor;
 
+    // --- LOGIC ---
     private int detectedApriltagId = -1;
+    private List<String> currentInventory = new ArrayList<>();
 
-    // --- TUNED SPINDEXER CONSTANTS ---
+    // ==================================================================
+    // 🔧 TUNING SECTION: SPINDEXER
+    // ==================================================================
+
+    // ADJUST HERE: If spindexer vibrates/shakes, LOWER this (try 0.002)
     final double SPINDEXER_KP = 0.003;
+
+    // ADJUST HERE: If spindexer stalls/stucks, INCREASE this (try 0.09)
     final double SPINDEXER_KF = 0.075;
+
+    // ADJUST HERE: Exact encoder ticks for 1/5th rotation.
     final double TICKS_PER_COMPARTMENT = 250.5;
 
-    // Spindexer State Tracking
     private int currentSpindexerSlot = 0;
-    private int spindexerTargetPos = 0;
-    private ElapsedTime spindexerCooldown = new ElapsedTime();
 
-    // --- SHOOTER VARIABLES ---
-    private double targetLeftVel = 0;
-    private double targetRightVel = 0;
+    // ==================================================================
+    // 🔧 TUNING SECTION: SHOOTER
+    // ==================================================================
+
+    // ADJUST HERE: Wait time (ms) to stabilize before shooting.
+    // Increase if accuracy is bad.
+    final long SETTLING_TIME_MS = 300;
+
+    // ADJUST HERE: Allowed error in RPM. Increase if robot waits too long to shoot.
     private final double RPM_TOLERANCE = 150.0;
 
-    // --- HOOD SERVO CALIBRATION (MUST TUNE THESE) ---
-    // See PDF Page 7: "Min angle a1 = Servo position s1" [cite: 137]
-    // Move servo to a low position. Record the Position (0.0-1.0) and the physical Angle (degrees).
-    final double SERVO_POS_1 = 0.2;  // <--- UPDATE THIS
-    final double ANGLE_AT_POS_1 = 10.0; // <--- UPDATE THIS (Physical degrees)
+    // ADJUST HERE: "Fudge Factor" for shot power.
+    // > 3.0 = Shoot Harder/Further. < 3.0 = Shoot Softer/Shorter.
+    final double SPEED_SCALAR = 3.0;
 
-    // Move servo to a high position. Record the Position and Angle.
-    final double SERVO_POS_2 = 0.8;  // <--- UPDATE THIS
-    final double ANGLE_AT_POS_2 = 55.0; // <--- UPDATE THIS (Physical degrees)
+    // ADJUST HERE: Servo Angles
+    final double SERVO_LOW_POS  = 0.5;   // Hood Down
+    final double SERVO_HIGH_POS = 0.58;  // Hood Up
 
-    // Field & Robot Constants
+    // ADJUST HERE: Distance (inches) to switch Hood Angle
+    final double SERVO_THRESHOLD_DIST = 90.0;
+
+    // ==================================================================
+    // 🔧 TUNING SECTION: FIELD MEASUREMENTS
+    // ==================================================================
     final double CAMERA_HEIGHT_INCHES = 16.25;
     final double TAG_HEIGHT_INCHES    = 29.5;
-    final double MOUNT_ANGLE_DEGREES  = 10.6;
+    final double MOUNT_ANGLE_DEGREES  = 10.6;  // ADJUST HERE: Tilt of Limelight
     final double SHOOTER_HEIGHT = 17.7;
     final double BASKET_HEIGHT  = 43.0;
     final double ENTRY_ANGLE    = -45;
-
-    // Kept for limit checks, though servo mapping handles the main logic
-    final double MAX_HOOD_DEGREES = 60.0;
-    final double FLYWHEEL_TICKS_PER_REV = 28.0;
     final double FLYWHEEL_RADIUS = 1.89;
-    final double SPEED_SCALAR = 3;
+
+    // INTERNAL VARIABLES
+    private double targetLeftVel = 0;
+    private double targetRightVel = 0;
+    private double lastServoPos = 0.5;
+    private ElapsedTime signalLossTimer = new ElapsedTime();
+    private boolean hasTargetMemory = false;
+    final double FLYWHEEL_TICKS_PER_REV = 28.0;
     private static final double G = 386.1;
+
+    // STATE MACHINE
+    private enum IntakeState { INIT, INTAKING, DETECTED_WAIT, INDEXING, FULL }
 
     @Override
     public void runOpMode() throws InterruptedException {
         initHardware();
 
         follower = Constants.createFollower(hardwareMap);
+        // ADJUST HERE: Starting Pose (X, Y, Heading Radians)
         follower.setStartingPose(new Pose(87.500, 8.000, Math.toRadians(90)));
         paths = new Paths(follower);
 
-        telemetry.addData("Status", "Initialized. Hood Servo Mode Active.");
+        telemetry.addData("Status", "Ready. Scan Obelisk NOW.");
         telemetry.update();
 
+        // --------------------------------------------------------
+        // INIT LOOP (Pre-Match Scanning)
+        // --------------------------------------------------------
         while (!isStarted() && !isStopRequested()) {
-            autoAimAndSpinUp();
             int id = readObeliskTagInstant();
-            if (id != -1) detectedApriltagId = id;
-            telemetry.addData("LOCKED ON", "Tag ID: %d", detectedApriltagId);
+            if (id != -1) {
+                detectedApriltagId = id;
+                telemetry.addData("LOCKED ON", "Tag ID: %d", detectedApriltagId);
+            } else {
+                telemetry.addData("SEARCHING", "Point Camera at Obelisk...");
+            }
+
+            scanInventory();
+            telemetry.addData("Inventory", currentInventory.toString());
             telemetry.update();
+
+            autoAimAndSpinUp();
         }
 
         if (opModeIsActive()) {
-            // --- SEGMENT 1 ---
+
+            // --- SEGMENT 1: PRE-LOAD ---
             follower.followPath(paths.Path1, true);
-            driveWithActions(false); // Drive to shoot pos
+            driveWithActions(false);
+
+            // ADJUST HERE: Shooting Position 1
             follower.holdPoint(new Pose(87.5, 27.25, Math.toRadians(64)));
+            smartSleep(SETTLING_TIME_MS);
             performSmartShot();
 
-            // --- SEGMENT 2 (Drive to Samples) ---
+            // --- SEGMENT 2: MOVE TO SAMPLE ---
             follower.followPath(paths.Path2, true);
             driveWithActions(false);
 
-            // --- SEGMENT 3 (Intake First Sample) ---
+            // --- SEGMENT 3: SMART INTAKE ---
+            // ADJUST HERE: Intake Drive Speed (0.5 = 50%)
             follower.setMaxPower(0.5);
             follower.followPath(paths.Path3, true);
-            driveWithIntakeAndSpindex();
+
+            // ADJUST HERE: Intake Timeout (4000ms = 4s)
+            runSmartIntakeCycle(4000);
+
             follower.setMaxPower(1.0);
 
-            // --- SEGMENT 4 (Drive Back) ---
+            // --- SEGMENT 4: SCORE ---
             follower.followPath(paths.Path4, true);
             driveWithActions(false);
+
+            // ADJUST HERE: Shooting Position 2
             follower.holdPoint(new Pose(86.75, 27.5, Math.toRadians(64)));
+            smartSleep(SETTLING_TIME_MS);
             performSmartShot();
 
-            // --- SEGMENT 5 ---
+            // --- SEGMENT 5: MOVE OUT ---
             follower.followPath(paths.Path5, true);
             driveWithActions(false);
 
-            // --- SEGMENT 6 (Intake Second Sample) ---
+            // --- SEGMENT 6: SMART INTAKE ---
             follower.setMaxPower(0.5);
             follower.followPath(paths.Path6, true);
-            driveWithIntakeAndSpindex();
+
+            // ADJUST HERE: Intake Timeout (4000ms)
+            runSmartIntakeCycle(4000);
+
             follower.setMaxPower(1.0);
 
-            // --- SEGMENT 7 ---
+            // --- SEGMENT 7: SCORE ---
             follower.followPath(paths.Path7, true);
             driveWithActions(false);
+
+            // ADJUST HERE: Shooting Position 3
             follower.holdPoint(new Pose(86.75, 27.5, Math.toRadians(64)));
+            smartSleep(SETTLING_TIME_MS);
             performSmartShot();
 
             stopShooter();
@@ -145,186 +208,208 @@ public class FarRedAuto extends LinearOpMode {
     }
 
     // =========================================================================
-    //   SPINDEXER LOGIC (Unchanged)
+    //   SMART INTAKE STATE MACHINE
     // =========================================================================
+    private void runSmartIntakeCycle(double timeoutMs) {
+        ElapsedTime timer = new ElapsedTime();
+        IntakeState state = IntakeState.INIT;
+        ElapsedTime stateTimer = new ElapsedTime();
 
-    private void updateSpindexer(boolean autoIndexEnabled) {
-        // 1. AUTO-INDEXING LOGIC
-        if (autoIndexEnabled && spindexerCooldown.milliseconds() > 1000) {
-            boolean hasSample = bench.detectByHue(bench.back, telemetry) != colorsensors.DetectedColor.UNKNOWN;
-            if (hasSample) {
-                currentSpindexerSlot++;
-                spindexerCooldown.reset();
+        while (opModeIsActive() && timer.milliseconds() < timeoutMs && state != IntakeState.FULL) {
+            follower.update();
+            autoAimAndSpinUp();
+
+            switch (state) {
+                case INIT:
+                    // Safety: Drop lifts
+                    llift.setPosition(SERVO_LOW_POS);
+                    rlift.setPosition(SERVO_LOW_POS);
+                    intakeMotor.setPower(1.0);
+                    state = IntakeState.INTAKING;
+                    break;
+
+                case INTAKING:
+                    if (currentInventory.size() >= 3) {
+                        state = IntakeState.FULL;
+                    }
+                    // ADJUST HERE: Sensor Threshold (200 is typical for Alpha)
+                    else if (intakeSensor.alpha() > 200) {
+                        stateTimer.reset();
+                        state = IntakeState.DETECTED_WAIT;
+                    }
+                    break;
+
+                case DETECTED_WAIT:
+                    // ADJUST HERE: Wait time for pixel to enter fully (100ms)
+                    if (stateTimer.milliseconds() > 100) {
+                        state = IntakeState.INDEXING;
+                    }
+                    break;
+
+                case INDEXING:
+                    rotateSpindexerOneSlot();
+                    scanInventory();
+                    telemetry.addData("Captured", currentInventory.toString());
+                    telemetry.update();
+                    state = IntakeState.INTAKING;
+                    break;
+
+                case FULL:
+                    break;
             }
         }
+        intakeMotor.setPower(0);
+        setSafeSpindexerPower(0);
+    }
 
-        // 2. TARGET CALCULATION
-        double preciseTarget = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
-        spindexerTargetPos = (int) Math.round(preciseTarget);
+    private void rotateSpindexerOneSlot() {
+        currentSpindexerSlot++;
+        double target = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
+        ElapsedTime safety = new ElapsedTime();
 
-        // 3. PIDF CONTROL
-        int currentPos = spindexerMotor.getCurrentPosition();
-        double error = spindexerTargetPos - currentPos;
-        double pTerm = error * SPINDEXER_KP;
-        double fTerm = 0;
-        if (Math.abs(error) > 5) {
-            fTerm = Math.signum(error) * SPINDEXER_KF;
+        // ADJUST HERE: Max time to try rotating (800ms)
+        while(opModeIsActive() && safety.milliseconds() < 800) {
+            double current = spindexerMotor.getCurrentPosition();
+            // ADJUST HERE: Position Tolerance (15 ticks)
+            if (Math.abs(target - current) < 15) break;
+
+            double error = target - current;
+            double power = (error * SPINDEXER_KP);
+
+            // ADJUST HERE: Max Power (0.6)
+            power = Math.max(-0.6, Math.min(0.6, power));
+            setSafeSpindexerPower(power);
         }
-        double power = pTerm + fTerm;
-        power = Math.max(-1.0, Math.min(1.0, power));
+        setSafeSpindexerPower(0);
+    }
+
+    // =========================================================================
+    //   INVENTORY & SENSOR LOGIC
+    // =========================================================================
+    private void scanInventory() {
+        currentInventory.clear();
+
+        // GUN SENSORS (Back)
+        if (isColor(lgunsensor, "PURPLE")) currentInventory.add("Purple");
+        else if (isColor(lgunsensor, "GREEN")) currentInventory.add("Green");
+
+        if (isColor(rgunsensor, "PURPLE")) currentInventory.add("Purple");
+        else if (isColor(rgunsensor, "GREEN")) currentInventory.add("Green");
+
+        // INTAKE SENSOR (Front)
+        // ADJUST HERE: Threshold for front sensor (200)
+        if (intakeSensor.alpha() > 200) {
+            if (intakeSensor.blue() > intakeSensor.red()) currentInventory.add("Purple");
+            else currentInventory.add("Green");
+        }
+    }
+
+    private boolean isColor(ColorSensor sensor, String target) {
+        if (target.equals("PURPLE")) {
+            return sensor.blue() > sensor.red() && sensor.blue() > sensor.green();
+        } else if (target.equals("GREEN")) {
+            return sensor.green() > sensor.blue() && sensor.green() > sensor.red();
+        }
+        return false;
+    }
+
+    // =========================================================================
+    //   SMART SHOOT LOGIC
+    // =========================================================================
+    private void performSmartShot() {
+        scanInventory();
+
+        int purpleCount = Collections.frequency(currentInventory, "Purple");
+        int greenCount = Collections.frequency(currentInventory, "Green");
+
+        // RULE: 3 Items, 2P + 1G
+        boolean isFull = currentInventory.size() >= 3;
+        boolean isValidComp = (purpleCount >= 2 && greenCount >= 1);
+
+        if (!isFull || !isValidComp) {
+            telemetry.addData("Strategy", "BAD LOAD - DUMPING!");
+            shootGeneric();
+        } else {
+            telemetry.addData("Strategy", "MATCHING TAG: " + detectedApriltagId);
+            if (detectedApriltagId == 21) shootGPP();
+            else if (detectedApriltagId == 22) shootPGP();
+            else if (detectedApriltagId == 23) shootPPG();
+            else shootPPG();
+        }
+        telemetry.update();
+    }
+
+    private void shootGeneric() {
+        waitForFlywheelReady();
+        performSingleShotLeft();
+        smartSleep(200);
+        performSingleShotRight();
+        smartSleep(200);
+        rotateSpindexerOneSlot();
+        smartSleep(200);
+        performSingleShotLeft();
+        llift.setPosition(1);
+        rlift.setPosition(0.005);
+    }
+
+    // =========================================================================
+    //   UNIVERSAL SAFETY RULE
+    // =========================================================================
+    private void setSafeSpindexerPower(double power) {
+        if (Math.abs(power) > 0.05) {
+            // Safety: If Lifts are UP, force them DOWN
+            // ADJUST HERE: Safety Tolerance (0.1)
+            if (Math.abs(llift.getPosition() - SERVO_LOW_POS) > 0.1 ||
+                    Math.abs(rlift.getPosition() - SERVO_LOW_POS) > 0.1) {
+
+                llift.setPosition(SERVO_LOW_POS);
+                rlift.setPosition(SERVO_LOW_POS);
+            }
+        }
         spindexerMotor.setPower(power);
     }
 
-    private void rotate() {
-        currentSpindexerSlot++;
-        ElapsedTime timer = new ElapsedTime();
-        while (opModeIsActive() && timer.milliseconds() < 400) {
-            updateSpindexer(false);
-        }
-    }
-
     // =========================================================================
-    //   DRIVING LOOPS
+    //   SHOOTING PATTERNS
     // =========================================================================
-
-    private void driveWithActions(boolean intakeOn) {
-        if(intakeOn) intakeMotor.setPower(0.75);
-        else intakeMotor.setPower(0);
-
-        while (opModeIsActive() && follower.isBusy()) {
-            follower.update();
-            autoAimAndSpinUp();
-            updateSpindexer(false);
-
-            TelemetryPacket packet = new TelemetryPacket();
-            packet.fieldOverlay().drawImage("/images/field.png", 0, 0, 144, 144);
-            FtcDashboard.getInstance().sendTelemetryPacket(packet);
-        }
-        intakeMotor.setPower(0);
-    }
-
-    private void driveWithIntakeAndSpindex() {
-        intakeMotor.setPower(0.75);
-        if (spindexerCooldown.seconds() > 2) spindexerCooldown.reset();
-
-        while (opModeIsActive() && follower.isBusy()) {
-            follower.update();
-            autoAimAndSpinUp();
-            updateSpindexer(true); // Allow auto-index
-
-            telemetry.addData("INTAKE", "Scanning for samples...");
-            telemetry.addData("Spindexer Slot", currentSpindexerSlot);
-            telemetry.update();
-        }
-        intakeMotor.setPower(0);
-    }
-
-    // =========================================================================
-    //   SHOOTING LOGIC
-    // =========================================================================
-
-    private void performSmartShot() {
-        if (detectedApriltagId == 21) shootGPP();
-        else if (detectedApriltagId == 22) shootPGP();
-        else if (detectedApriltagId == 23) shootPPG();
-        else shootPPG();
-    }
-
     private void shootGPP() {
-        waitForFlywheelReady();
-        if (isColor(bench.left, colorsensors.DetectedColor.GREEN) &&
-                isColor(bench.right, colorsensors.DetectedColor.PURPLE)) {
-            safeShootDual(true, true);
-            smartSleep(250);
-            rotatePurpleIn();
-            safeShootPurple();
-        } else {
-            rotateGreenIn();
-            if (!safeShootGreen()) { rotateGreenIn(); safeShootGreen(); }
-            smartSleep(250);
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-            smartSleep(250);
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-        }
+        safeShootDual(true, true);
+        smartSleep(250);
+        rotateSpindexerOneSlot();
+        safeShootPurple();
     }
 
     private void shootPGP() {
-        waitForFlywheelReady();
-        if (isColor(bench.left, colorsensors.DetectedColor.GREEN) &&
-                isColor(bench.right, colorsensors.DetectedColor.PURPLE)) {
-            safeShootDual(true, false);
-            smartSleep(250);
-            rotatePurpleIn();
-            safeShootPurple();
-        } else if (isColor(bench.right, colorsensors.DetectedColor.GREEN) &&
-                isColor(bench.left, colorsensors.DetectedColor.PURPLE)) {
-            safeShootDual(false, false);
-            smartSleep(250);
-            rotatePurpleIn();
-            safeShootPurple();
-        } else {
-            rotatePurpleIn();
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-            smartSleep(250);
-            if (!safeShootGreen()) { rotateGreenIn(); safeShootGreen(); }
-            smartSleep(250);
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-        }
+        safeShootDual(true, false);
+        smartSleep(250);
+        rotateSpindexerOneSlot();
+        safeShootPurple();
     }
 
     private void shootPPG() {
-        waitForFlywheelReady();
-        if (isColor(bench.left, colorsensors.DetectedColor.PURPLE) &&
-                isColor(bench.right, colorsensors.DetectedColor.PURPLE)) {
-            safeShootDual(true, false);
-            smartSleep(250);
-            rotateGreenIn();
-            safeShootGreen();
-        } else if (isColor(bench.right, colorsensors.DetectedColor.PURPLE) &&
-                isColor(bench.left, colorsensors.DetectedColor.PURPLE)) {
-            safeShootDual(false, false);
-            smartSleep(250);
-            rotateGreenIn();
-            safeShootGreen();
-        } else {
-            rotatePurpleIn();
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-            smartSleep(250);
-            if (!safeShootPurple()) { rotatePurpleIn(); safeShootPurple(); }
-            smartSleep(250);
-            if (!safeShootGreen()) { rotateGreenIn(); safeShootGreen(); }
-        }
+        safeShootDual(true, false);
+        smartSleep(250);
+        rotateSpindexerOneSlot();
+        safeShootGreen();
     }
 
-    // =========================================================================
-    //   HELPER ACTIONS
-    // =========================================================================
-
     private boolean safeShootGreen() {
-        if (isColor(bench.left, colorsensors.DetectedColor.GREEN)) {
-            performSingleShotLeft(); return true;
-        } else if (isColor(bench.right, colorsensors.DetectedColor.GREEN)) {
-            performSingleShotRight(); return true;
-        }
-        return false;
+        performSingleShotLeft();
+        return true;
     }
 
     private boolean safeShootPurple() {
-        if (isColor(bench.left, colorsensors.DetectedColor.PURPLE)) {
-            performSingleShotLeft(); return true;
-        } else if (isColor(bench.right, colorsensors.DetectedColor.PURPLE)) {
-            performSingleShotRight(); return true;
-        }
-        return false;
+        performSingleShotRight();
+        return true;
     }
 
     private void safeShootDual(boolean leftFirst, boolean isGPP) {
         waitForFlywheelReady();
         if (isGPP) {
-            llift.setPosition(0.625);
+            llift.setPosition(0.625); // ADJUST HERE: Left Lift Pos
             smartSleep(200);
             waitForFlywheelReady();
-            rlift.setPosition(0.3);
+            rlift.setPosition(0.3);   // ADJUST HERE: Right Lift Pos
         } else {
             rlift.setPosition(0.3);
             smartSleep(200);
@@ -333,6 +418,7 @@ public class FarRedAuto extends LinearOpMode {
         }
         smartSleep(300);
         llift.setPosition(1); rlift.setPosition(0.005);
+        smartSleep(400);
     }
 
     private void performSingleShotLeft() {
@@ -340,6 +426,7 @@ public class FarRedAuto extends LinearOpMode {
         llift.setPosition(0.625);
         smartSleep(300);
         llift.setPosition(1);
+        smartSleep(400);
     }
 
     private void performSingleShotRight() {
@@ -347,67 +434,112 @@ public class FarRedAuto extends LinearOpMode {
         rlift.setPosition(0.3);
         smartSleep(300);
         rlift.setPosition(0.005);
+        smartSleep(400);
     }
 
-    private boolean rotateGreenIn() {
-        rotate();
-        if (!greenInChamber()) { rotate(); }
-        if (!greenInChamber()) { rotate(); }
-        return greenInChamber();
+    private void stopShooter() {
+        LflywheelMotor.setVelocity(0);
+        RflywheelMotor.setVelocity(0);
     }
 
-    private boolean rotatePurpleIn() {
-        rotate();
-        if (!purpleInChamber()) { rotate(); }
-        if (!purpleInChamber()) { rotate(); }
-        return purpleInChamber();
-    }
-
+    // =========================================================================
+    //   UTILITIES & PHYSICS
+    // =========================================================================
     public void smartSleep(long milliseconds) {
         ElapsedTime timer = new ElapsedTime();
         while (opModeIsActive() && timer.milliseconds() < milliseconds) {
             follower.update();
             autoAimAndSpinUp();
-            updateSpindexer(false);
         }
     }
 
     private void waitForFlywheelReady() {
         ElapsedTime timeout = new ElapsedTime();
-        while (opModeIsActive() && timeout.seconds() < 1.0) {
+        // ADJUST HERE: Max wait time for flywheel (0.8s)
+        while (opModeIsActive() && timeout.seconds() < 0.8) {
             follower.update();
             autoAimAndSpinUp();
-            updateSpindexer(false);
 
             double currentLeft = LflywheelMotor.getVelocity();
             double currentRight = RflywheelMotor.getVelocity();
-            boolean leftReady = Math.abs(currentLeft - targetLeftVel) < RPM_TOLERANCE;
-            boolean rightReady = Math.abs(currentRight - targetRightVel) < RPM_TOLERANCE;
-            if (leftReady && rightReady) break;
+            if (Math.abs(currentLeft - targetLeftVel) < RPM_TOLERANCE &&
+                    Math.abs(currentRight - targetRightVel) < RPM_TOLERANCE) break;
+        }
+    }
+
+    private void driveWithActions(boolean intakeOn) {
+        // ADJUST HERE: Intake Power while driving (0.75)
+        if(intakeOn) intakeMotor.setPower(0.75);
+        else intakeMotor.setPower(0);
+
+        while (opModeIsActive() && follower.isBusy()) {
+            follower.update();
+            autoAimAndSpinUp();
+            TelemetryPacket packet = new TelemetryPacket();
+            packet.fieldOverlay().drawImage("/images/field.png", 0, 0, 144, 144);
+            FtcDashboard.getInstance().sendTelemetryPacket(packet);
+        }
+        intakeMotor.setPower(0);
+    }
+
+    private void autoAimAndSpinUp() {
+        LLResult result = limelight.getLatestResult();
+        if (result != null && result.isValid()) {
+            signalLossTimer.reset();
+            hasTargetMemory = true;
+
+            double ty = result.getTy();
+            double angleToGoalRadians = Math.toRadians(MOUNT_ANGLE_DEGREES + ty);
+            double currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
+
+            double heightY = BASKET_HEIGHT - SHOOTER_HEIGHT;
+            ShotData shot = calculateShot(currentDist, heightY, ENTRY_ANGLE);
+
+            if (shot.isPossible) {
+                lastServoPos = (currentDist < SERVO_THRESHOLD_DIST) ? SERVO_LOW_POS : SERVO_HIGH_POS;
+
+                double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
+                targetRPM *= SPEED_SCALAR;
+                double targetVelocityTicks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
+
+                targetLeftVel = targetVelocityTicks;
+                targetRightVel = targetVelocityTicks;
+
+                // ADJUST HERE: Long Distance Speed Multiplier (1.80)
+                if (currentDist > 120.0) targetLeftVel *= 1.80;
+
+                hoodServo.setPosition(lastServoPos);
+                LflywheelMotor.setVelocity(targetLeftVel);
+                RflywheelMotor.setVelocity(targetRightVel);
+            }
+        } else {
+            if (signalLossTimer.milliseconds() < 1000 && hasTargetMemory) {
+                hoodServo.setPosition(lastServoPos);
+                LflywheelMotor.setVelocity(targetLeftVel);
+                RflywheelMotor.setVelocity(targetRightVel);
+            } else {
+                hoodServo.setPosition(SERVO_LOW_POS);
+                LflywheelMotor.setVelocity(0);
+                RflywheelMotor.setVelocity(0);
+                hasTargetMemory = false;
+            }
         }
     }
 
     // =========================================================================
-    //   INIT & HARDWARE
+    //   INIT HARDWARE
     // =========================================================================
-
     private void initHardware() {
         LflywheelMotor = hardwareMap.get(DcMotorEx.class, "lgun");
         LflywheelMotor.setDirection(DcMotorSimple.Direction.FORWARD);
         LflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        LflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(100, 0, 1.5, 16.45));
 
         RflywheelMotor = hardwareMap.get(DcMotorEx.class, "rgun");
         RflywheelMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         RflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        RflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(100, 0, 1.5, 16.45));
 
-        // --- NEW HOOD SERVO INIT ---
         hoodServo = hardwareMap.get(Servo.class, "hood");
-        // If the servo moves opposite to your angle, uncomment this:
-        // hoodServo.setDirection(Servo.Direction.REVERSE);
-        // Initialize to a safe position (e.g., minimum angle)
-        hoodServo.setPosition(SERVO_POS_1);
+        hoodServo.setPosition(SERVO_LOW_POS);
 
         spindexerMotor = hardwareMap.get(DcMotorEx.class, "spindexer");
         spindexerMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
@@ -420,14 +552,14 @@ public class FarRedAuto extends LinearOpMode {
 
         limelight = hardwareMap.get(Limelight3A.class, "limelight");
         limelight.pipelineSwitch(0);
-        limelight.setPollRateHz(100);
         limelight.start();
 
         llift = hardwareMap.get(Servo.class, "llift");
         rlift = hardwareMap.get(Servo.class, "rlift");
 
-        bench = new colorsensors();
-        bench.init(hardwareMap);
+        // SENSORS
+        lgunsensor = hardwareMap.get(ColorSensor.class, "lgunsensor");
+        rgunsensor = hardwareMap.get(ColorSensor.class, "rgunsensor");
         intakeSensor = hardwareMap.get(ColorSensor.class, "intake sensor");
 
         llift.setPosition(1);
@@ -444,71 +576,6 @@ public class FarRedAuto extends LinearOpMode {
             }
         }
         return -1;
-    }
-
-    // =========================================================================
-    //   AUTO AIM (UPDATED WITH SERVO MAPPING)
-    // =========================================================================
-
-    private void autoAimAndSpinUp() {
-        LLResult result = limelight.getLatestResult();
-        if (result != null && result.isValid()) {
-            double ty = result.getTy();
-            double angleToGoalRadians = Math.toRadians(MOUNT_ANGLE_DEGREES + ty);
-            double currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
-            double heightY = BASKET_HEIGHT - SHOOTER_HEIGHT;
-            ShotData shot = calculateShot(currentDist, heightY, ENTRY_ANGLE);
-
-            if (shot.isPossible) {
-                // 1. Get Target Physics Angle
-                double physicsAngle = shot.launchAngleDegrees;
-                double invertedAngle = MAX_HOOD_DEGREES - physicsAngle; // Kept your original logic
-
-                // 2. Clamp Angle to Calibration Range
-                double targetAngle = Math.max(ANGLE_AT_POS_1, Math.min(ANGLE_AT_POS_2, invertedAngle));
-
-                // 3. Map Angle to Servo Position (PDF Page 7 Formula)
-                // Position = (s1 - s2)/(a1 - a2) * (angle - a1) + s1
-                double slope = (SERVO_POS_1 - SERVO_POS_2) / (ANGLE_AT_POS_1 - ANGLE_AT_POS_2);
-                double targetServoPos = slope * (targetAngle - ANGLE_AT_POS_1) + SERVO_POS_1;
-
-                // 4. Set Servo
-                hoodServo.setPosition(targetServoPos);
-
-                // 5. Spin Up Flywheels (Original Logic)
-                double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
-                targetRPM *= SPEED_SCALAR;
-                double targetVelocityTicks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
-
-                double leftVel = targetVelocityTicks;
-                if (currentDist > 120.0) leftVel *= 1.75;
-
-                targetLeftVel = leftVel;
-                targetRightVel = targetVelocityTicks;
-                LflywheelMotor.setVelocity(leftVel);
-                RflywheelMotor.setVelocity(targetVelocityTicks);
-            }
-        }
-    }
-
-    private boolean isColor(NormalizedColorSensor sensor, colorsensors.DetectedColor target) {
-        return bench.detectByHue(sensor, telemetry) == target;
-    }
-
-    private boolean greenInChamber() {
-        return isColor(bench.left, colorsensors.DetectedColor.GREEN) ||
-                isColor(bench.right, colorsensors.DetectedColor.GREEN);
-    }
-
-    private boolean purpleInChamber() {
-        return isColor(bench.left, colorsensors.DetectedColor.PURPLE) ||
-                isColor(bench.right, colorsensors.DetectedColor.PURPLE);
-    }
-
-    private void stopShooter() {
-        LflywheelMotor.setVelocity(0);
-        RflywheelMotor.setVelocity(0);
-        intakeMotor.setPower(0);
     }
 
     private ShotData calculateShot(double x, double y, double theta) {
@@ -536,33 +603,44 @@ public class FarRedAuto extends LinearOpMode {
         public boolean isPossible;
     }
 
+    // =========================================================================
+    //   PATH DEFINITIONS
+    // =========================================================================
     public static class Paths {
         public PathChain Path1, Path2, Path3, Path4, Path5, Path6, Path7;
         public Paths(Follower follower) {
+            // ADJUST HERE: All Path Coordinates (X, Y, Heading)
+
             Path1 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(87.500, 8.000), new Pose(86.75, 28 )))
                     .setLinearHeadingInterpolation(Math.toRadians(90), Math.toRadians(64))
                     .build();
+
             Path2 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(86.75, 27.5), new Pose(104.000, 45.000)))
                     .setLinearHeadingInterpolation(Math.toRadians(64), Math.toRadians(-1))
                     .build();
+
             Path3 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(104.000, 43.000), new Pose(145.000, 45.000)))
                     .setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(-1))
                     .build();
+
             Path4 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(145.000, 43.000), new Pose(86.75, 28)))
                     .setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(64))
                     .build();
+
             Path5 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(86.75, 27.5), new Pose(104.000, 65.000)))
                     .setLinearHeadingInterpolation(Math.toRadians(64), Math.toRadians(-1))
                     .build();
+
             Path6 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(104.000, 65.000), new Pose(145.000, 65.000)))
                     .setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(-1))
                     .build();
+
             Path7 = follower.pathBuilder()
                     .addPath(new BezierLine(new Pose(145.000, 65.000), new Pose(86.75, 28)))
                     .setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(64))

@@ -1,8 +1,7 @@
-package org.firstinspires.ftc.teamcode.NanoTrojans.TeleOp_NanoTrojans;
+package org.firstinspires.ftc.teamcode.NanoTrojans.Tools;
 
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
 
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
 

@@ -117,10 +117,10 @@ public class colorsensors {
 //        }
 //        else
 //        {
-            if (hue >= 149 && hue <= 163) {
+            if (hue >= 140 && hue <= 170) {// Changed from 149 to 163 and then 170
                 result = DetectedColor.GREEN;
                 //return DetectedColor.GREEN;
-            } else if (hue >= 165 && hue <= 240) {
+            } else if (hue >= 171 && hue <= 240) { // changed from 163
 
                 result = DetectedColor.PURPLE;
                 //return DetectedColor.PURPLE;
@@ -136,10 +136,10 @@ public class colorsensors {
 
 
         DetectedColor result = DetectedColor.UNKNOWN;
-        if (hue >= 149 && hue <= 163) {
+        if (hue >= 140 && hue <= 170) { // changed from 163
             result = DetectedColor.GREEN;
             //return DetectedColor.GREEN;
-        } else if (hue >= 165 && hue <= 240) {
+        } else if (hue >= 171 && hue <= 240) { // changed from 163
 
             result = DetectedColor.PURPLE;
             //return DetectedColor.PURPLE;
