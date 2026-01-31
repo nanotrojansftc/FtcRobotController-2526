@@ -11,9 +11,8 @@ import com.qualcomm.robotcore.hardware.IMU;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
-// --- CORRECTED IMPORTS ---
 import com.pedropathing.follower.Follower;
-import com.pedropathing.geometry.Pose; // This was the broken line
+import com.pedropathing.geometry.Pose;
 import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
@@ -42,7 +41,6 @@ public class TeleOpMainMC extends LinearOpMode {
     @Override
     public void runOpMode() throws InterruptedException {
 
-        // --- CORRECTED INITIALIZATION ---
         follower = Constants.createFollower(hardwareMap);
         follower.setStartingPose(new Pose(0, 0, 0));
         follower.startTeleopDrive();
@@ -91,9 +89,11 @@ public class TeleOpMainMC extends LinearOpMode {
         public void run() {
             waitForStart();
             while (!Thread.interrupted() && opModeIsActive()) {
-                lefthue = bench.getHueValue(bench.left, telemetry);
-                righthue = bench.getHueValue(bench.right, telemetry);
-                backhue = bench.getHueValue(bench.back, telemetry);
+                // FIXED: Updated to use .getHue() and removed telemetry argument
+                lefthue = bench.getHue(bench.left);
+                righthue = bench.getHue(bench.right);
+                backhue = bench.getHue(bench.back);
+
                 //telemetry.addData("Left color", "%s, Hue=%.2f", bench.detectByHue(lefthue, telemetry), lefthue);
                 //telemetry.addData("Right color", "%s, Hue=%.2f", bench.detectByHue(righthue, telemetry), righthue);
                 //telemetry.addData("Back color", "%s, Hue=%.2f", bench.detectByHue(backhue, telemetry), backhue);

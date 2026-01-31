@@ -4,52 +4,48 @@ package org.firstinspires.ftc.teamcode.NanoTrojans.Auto_NanoTrojans; // Defines 
 // Imports allow us to use code libraries written by FIRST, Google, or other teams.
 
 // Dashboard: Allows us to see the robot's position on a laptop web browser.
+
 import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
-
-// PedroPathing: The math library for smooth curve driving (Bezier curves).
 import com.pedropathing.follower.Follower;
 import com.pedropathing.geometry.BezierLine;
 import com.pedropathing.geometry.Pose;
 import com.pedropathing.paths.PathChain;
-import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
-
-// Limelight: The library to talk to the AI Camera.
 import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.hardware.CRServo;
+import com.qualcomm.robotcore.hardware.ColorSensor;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
+import com.qualcomm.robotcore.hardware.DistanceSensor;
+import com.qualcomm.robotcore.hardware.NormalizedColorSensor;
+import com.qualcomm.robotcore.hardware.PIDFCoefficients;
+import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
-// Hardware & OpMode: Standard tools from the FTC SDK.
-import com.qualcomm.robotcore.eventloop.opmode.Autonomous; // Shows up on driver station
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode; // Runs code sequentially
-import com.qualcomm.robotcore.hardware.CRServo; // Continuous Rotation Servo
-import com.qualcomm.robotcore.hardware.ColorSensor; // Standard sensor
-import com.qualcomm.robotcore.hardware.DcMotor; // Standard motor
-import com.qualcomm.robotcore.hardware.DcMotorEx; // Advanced motor (velocity control)
-import com.qualcomm.robotcore.hardware.DcMotorSimple; // Direction helper
-import com.qualcomm.robotcore.hardware.DistanceSensor; // Distance reading capability
-import com.qualcomm.robotcore.hardware.NormalizedColorSensor; // Advanced color reading
-import com.qualcomm.robotcore.hardware.PIDFCoefficients; // Motor tuning math
-import com.qualcomm.robotcore.hardware.Servo; // Standard position servo
-import com.qualcomm.robotcore.util.ElapsedTime; // Stopwatch
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
+import org.firstinspires.ftc.teamcode.NanoTrojans.TeleOp_NanoTrojans.TeleOpAutomation;
+import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
-// Java Utilities
-import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit; // Inches vs MM
-import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors; // Custom library
-import java.util.List; // For handling lists of tags
+import java.util.List;
 
 // @Autonomous: Registers this program so it appears on the Driver Station phone.
 // group="Competition": Organizes it into a specific folder.
-@Autonomous(name = "Close Red Auto Not Work", group = "Competition")
-public class CloseRedAuto extends LinearOpMode {
+@Autonomous(name = "Close Red Auto Final2", group = "Competition")
+public class CloseRedAuto2 extends LinearOpMode {
 
     // --- HARDWARE OBJECTS ---
     private Follower follower; // The "Driver" (Pedro Pathing)
     private Paths paths; // The "Map" (List of coordinates)
-
-    private DcMotorEx LflywheelMotor, RflywheelMotor, hoodMotor; // Shooter mechanics
+    //private CRServo fspin, rspin, lspin; // Spindex (Carousel) servos
+    private DcMotorEx LflywheelMotor, RflywheelMotor, spindexerMotor, hoodMotor; // Shooter mechanics
     private DcMotor intakeMotor; // Intake mechanic
-    private CRServo fspin, rspin, lspin; // Spindex (Carousel) servos
+    //private CRServo fspin, rspin, lspin; // Spindex (Carousel) servos
     private Servo llift, rlift; // Lift/feeder servos
     private Limelight3A limelight; // AI Camera
     private colorsensors bench; // Custom color sensor manager
@@ -75,12 +71,42 @@ public class CloseRedAuto extends LinearOpMode {
     final double SPEED_SCALAR = 3; // Speed tuner
     private static final double G = 386.1; // Gravity (inches/sec^2)
 
+
+    // --- CONSTANTS ---
+    final double SPINDEXER_KP = 0.003;
+    final double SPINDEXER_KF = 0.075;
+    final double TICKS_PER_COMPARTMENT = 250.5;
+
+    final double RPM_TOLERANCE = 150.0;
+
+
+    // --- SAFETY CONSTANT ---
+    // Time (ms) to wait for lifts to physically lower before spinning spindexer
+    final long LIFT_SAFETY_DELAY_MS = 450;
+
     // --- ROTATION VARIABLES ---
     private boolean isRotating = false; // Are we currently spinning the carousel?
     private ElapsedTime rotationTimer = new ElapsedTime(); // Timer for the spin
 
     // UPDATED: Set to 410.0 as requested
     private final double ROTATION_TIME_MS = 410.0;
+
+    private int currentSpindexerSlot = 0;
+    private int spindexerTargetPos = 0;
+
+    private boolean liftIsUp = false;
+
+    enum ShootState {
+        STOPPED,
+        AIMING_AND_SPINUP,
+        FIRING_LIFT_UP_1,
+        FIRING_RESET_1,
+        FIRING_SPIN_INDEXER,
+        FIRING_LIFT_UP_2,
+        FIRING_RESET_2
+    }
+
+    private ShootState shootState = ShootState.STOPPED;
 
     @Override
     public void runOpMode() throws InterruptedException {
@@ -195,6 +221,46 @@ public class CloseRedAuto extends LinearOpMode {
     //   DRIVING LOOPS & LOGIC
     // =========================================================================
 
+    private void rotate() {
+        // --- 1. SHOOTER CONTROL OVERRIDE ---
+        // If the shooter logic is manually spinning the indexer (The "Nudge"),
+        // we simply RETURN. We do NOT set power to 0.
+        // This lets updateShooterLogic() maintain the 0.375 power.
+        if (shootState == ShootState.FIRING_SPIN_INDEXER) {
+            return;
+        }
+
+        // --- 2. SAFETY GUARD ---
+        // Disable PID and FORCE STOP if:
+        // A. Lifts are physically up.
+        // B. Lifts are currently falling (RESET states), so we don't hit them.
+        if (liftIsUp ||
+                shootState == ShootState.FIRING_RESET_1 ||
+                shootState == ShootState.FIRING_RESET_2) {
+
+            spindexerMotor.setPower(0);
+            return;
+        }
+
+        // --- 3. NORMAL PID BEHAVIOR ---
+        double preciseTarget = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
+        spindexerTargetPos = (int) Math.round(preciseTarget);
+
+        int currentPos = spindexerMotor.getCurrentPosition();
+        double error = spindexerTargetPos - currentPos;
+
+        if (Math.abs(error) < 5) {
+            spindexerMotor.setPower(0);
+            return;
+        }
+
+        double pTerm = error * SPINDEXER_KP;
+        double fTerm = Math.signum(error) * SPINDEXER_KF;
+        double power = pTerm + fTerm;
+        power = Math.max(-0.6, Math.min(0.6, power));
+
+        spindexerMotor.setPower(power);
+    }
     /**
      * Standard drive loop.
      * Keeps the follower updating and telemetry active.
@@ -233,7 +299,7 @@ public class CloseRedAuto extends LinearOpMode {
             if (isRotating) {
                 // If currently rotating, check if time is up
                 if (rotationTimer.milliseconds() > ROTATION_TIME_MS) {
-                    stopCarousel(); // Stop servos
+                    //stopCarousel(); // Stop servos
                     isRotating = false;
                     carouselIndex++; // Advance index (0->1->2)
                     if (carouselIndex > 2) carouselIndex = 0;
@@ -253,7 +319,8 @@ public class CloseRedAuto extends LinearOpMode {
 
                 // If ball is there and we aren't full -> Spin!
                 if (ballAtIntake && !chamberFull) {
-                    startCarouselRotation();
+                    //startCarouselRotation();
+                    rotate();
                 }
                 telemetry.addData("Intake Dist", "%.1f mm", distanceMM);
             }
@@ -262,7 +329,7 @@ public class CloseRedAuto extends LinearOpMode {
         }
 
         intakeMotor.setPower(0); // Stop Intake
-        stopCarousel(); // Stop Servos
+        //stopCarousel(); // Stop Servos
     }
 
     // =========================================================================
@@ -418,7 +485,7 @@ public class CloseRedAuto extends LinearOpMode {
     }
 
     // --- ROTATION LOGIC (FIXED) ---
-    private void rotate() {
+    /*private void rotate() {
         autoAimAndSpinUp();
 
         // UPDATED: Use the variable (410.0), cast to long for sleep()
@@ -440,19 +507,19 @@ public class CloseRedAuto extends LinearOpMode {
             sleep(sleepTime); // Uses 410ms
             fspin.setPower(0);
         }
-    }
+    }*/
 
-    private void startCarouselRotation() {
+    /*private void startCarouselRotation() {
         isRotating = true;
         rotationTimer.reset();
         if (carouselIndex == 0) fspin.setPower(-1);
         else if (carouselIndex == 1) rspin.setPower(-1);
         else if (carouselIndex == 2) lspin.setPower(-1);
-    }
+    }*/
 
-    private void stopCarousel() {
+    /*private void stopCarousel() {
         fspin.setPower(0); rspin.setPower(0); lspin.setPower(0);
-    }
+    }*/
 
     // =========================================================================
     //   VISION & CALCULATIONS
@@ -487,8 +554,8 @@ public class CloseRedAuto extends LinearOpMode {
                 double invertedAngle = MAX_HOOD_DEGREES - physicsAngle;
                 int targetTicks = (int) Math.round(10 * invertedAngle * HOOD_TICKS_PER_DEGREE);
                 targetTicks = Math.max(0, Math.min((int)(MAX_HOOD_DEGREES * HOOD_TICKS_PER_DEGREE), targetTicks));
-                hoodMotor.setTargetPosition(targetTicks);
-                hoodMotor.setPower(1.0);
+               /* hoodMotor.setTargetPosition(targetTicks);
+                hoodMotor.setPower(1.0);*/
 
                 // Set Flywheel Velocity
                 double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
@@ -557,12 +624,12 @@ public class CloseRedAuto extends LinearOpMode {
         RflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         RflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, new PIDFCoefficients(100, 0, 1.5, 16.45));
 
-        hoodMotor = hardwareMap.get(DcMotorEx.class, "hood");
+        /*hoodMotor = hardwareMap.get(DcMotorEx.class, "hood");
         hoodMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         hoodMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         hoodMotor.setTargetPosition(0);
         hoodMotor.setMode(DcMotor.RunMode.RUN_TO_POSITION);
-        hoodMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+        hoodMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);*/
 
         intakeMotor = hardwareMap.get(DcMotor.class, "intake");
         intakeMotor.setDirection(DcMotorSimple.Direction.REVERSE);
@@ -573,9 +640,9 @@ public class CloseRedAuto extends LinearOpMode {
         limelight.setPollRateHz(100);
         limelight.start();
 
-        fspin = hardwareMap.crservo.get("fspin");
+        /*fspin = hardwareMap.crservo.get("fspin");
         rspin = hardwareMap.crservo.get("rspin");
-        lspin = hardwareMap.crservo.get("lspin");
+        lspin = hardwareMap.crservo.get("lspin");*/
         llift = hardwareMap.get(Servo.class, "llift");
         rlift = hardwareMap.get(Servo.class, "rlift");
 
@@ -609,7 +676,7 @@ public class CloseRedAuto extends LinearOpMode {
                                     new Pose(122.600, 122.000),
                                     new Pose(90.000, 100.000)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(36.4), Math.toRadians(112))
+                    ).setLinearHeadingInterpolation(Math.toRadians(36.4), Math.toRadians(36.4))
                     .build();
 
             // Path 2: Adjust Heading to face goal

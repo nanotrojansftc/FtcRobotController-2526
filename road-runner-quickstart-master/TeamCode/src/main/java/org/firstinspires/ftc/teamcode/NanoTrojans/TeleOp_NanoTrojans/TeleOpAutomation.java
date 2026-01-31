@@ -246,9 +246,9 @@ public class TeleOpAutomation extends LinearOpMode {
                 sleep(300);
                 resetLifts(); // Command Down
 
-                    //shootState = ShootState.RESETTING_LIFTS;
+                //shootState = ShootState.RESETTING_LIFTS;
                 sleep(500);
-                    //rotate
+                //rotate
                 //applyPIDToSpindexer();
 
                 double error = 100;
@@ -260,7 +260,7 @@ public class TeleOpAutomation extends LinearOpMode {
                 sleep(300);
                 spindexerMotor.setPower(0);
                 moveUpLifts();
-                    // Wait for servo to move up and ball to launch (400ms)
+                // Wait for servo to move up and ball to launch (400ms)
                 sleep(500);
                 resetLifts(); // Command Down
                 sleep(800);

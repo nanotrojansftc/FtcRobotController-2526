@@ -4,7 +4,6 @@ import com.pedropathing.follower.Follower;
 import com.pedropathing.geometry.BezierLine;
 import com.pedropathing.geometry.Pose;
 import com.pedropathing.paths.PathChain;
-import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 import com.qualcomm.hardware.limelightvision.LLResult;
 import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
@@ -17,8 +16,8 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-// --- CORRECT IMPORT ---
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
+import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 /*
  * ==========================================================================================
@@ -31,8 +30,8 @@ import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
  * ==========================================================================================
  */
 
-@Autonomous(name = "Far Red Auto - Final Integration", group = "Competition")
-public class FarRedAuto extends LinearOpMode {
+@Autonomous(name = "Close Red Auto - Final Integration", group = "Competition")
+public class CloseRedAuto3 extends LinearOpMode {
 
     // --- HARDWARE ---
     private Follower follower;
@@ -88,7 +87,7 @@ public class FarRedAuto extends LinearOpMode {
         initHardware();
 
         follower = Constants.createFollower(hardwareMap);
-        follower.setStartingPose(new Pose(87.500, 8.000, Math.toRadians(90)));
+        follower.setStartingPose(new Pose(122.600, 122.000, Math.toRadians(36.4)));
         paths = new Paths(follower);
 
         telemetry.addData("Status", "Initialized. Bench Library Active.");
@@ -100,14 +99,14 @@ public class FarRedAuto extends LinearOpMode {
             limelight.start();
             resetLifts();
 
-            // 1. SCAN OBELISK
-            scanObeliskWithTimeout(2000);
 
             // 2. PATH 1 -> SHOOT
             driveWithStates(paths.Path1, false, false, 3000);
+            scanObeliskWithTimeout(2000);
+            driveWithStates(paths.Path2, false, false, 3000);
             performTeleOpShootingSequence();
 
-            // 3. PATH 2 -> PATH 3 (Intake ON)
+            /*// 3. PATH 2 -> PATH 3 (Intake ON)
             driveWithStates(paths.Path2, false, false, 3000);
             driveWithStates(paths.Path3, true, false, 5000);
 
@@ -122,7 +121,7 @@ public class FarRedAuto extends LinearOpMode {
             // 6. PATH 7 -> FINAL SHOOT
             driveWithStates(paths.Path7, false, false, 4000);
             performTeleOpShootingSequence();
-
+*/
             stopShooterHardware();
 
             // TELEMETRY HOLD LOOP
@@ -391,17 +390,84 @@ public class FarRedAuto extends LinearOpMode {
 
         resetLifts();
     }
-
     public static class Paths {
-        public PathChain Path1, Path2, Path3, Path4, Path5, Path6, Path7;
+        public PathChain Path1, Path2, Path3, Path4, Path5, Path6, Path7, Path8;
+
         public Paths(Follower follower) {
-            Path1 = follower.pathBuilder().addPath(new BezierLine(new Pose(87.500, 8.000), new Pose(86.75, 28 ))).setLinearHeadingInterpolation(Math.toRadians(90), Math.toRadians(64)).build();
-            Path2 = follower.pathBuilder().addPath(new BezierLine(new Pose(86.75, 27.5), new Pose(104.000, 45.000))).setLinearHeadingInterpolation(Math.toRadians(64), Math.toRadians(-1)).build();
-            Path3 = follower.pathBuilder().addPath(new BezierLine(new Pose(104.000, 43.000), new Pose(145.000, 45.000))).setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(-1)).build();
-            Path4 = follower.pathBuilder().addPath(new BezierLine(new Pose(145.000, 43.000), new Pose(86.75, 28))).setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(64)).build();
-            Path5 = follower.pathBuilder().addPath(new BezierLine(new Pose(86.75, 27.5), new Pose(104.000, 65.000))).setLinearHeadingInterpolation(Math.toRadians(64), Math.toRadians(-1)).build();
-            Path6 = follower.pathBuilder().addPath(new BezierLine(new Pose(104.000, 65.000), new Pose(145.000, 65.000))).setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(-1)).build();
-            Path7 = follower.pathBuilder().addPath(new BezierLine(new Pose(145.000, 65.000), new Pose(86.75, 28))).setLinearHeadingInterpolation(Math.toRadians(-1), Math.toRadians(64)).build();
+
+            // Path 1: Start (Top Right) -> Shooting Spot
+            Path1 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(122.600, 122.000),
+                                    new Pose(90.000, 100.000)
+                            )
+                    ).setLinearHeadingInterpolation(Math.toRadians(36.4), Math.toRadians(112))
+                    .build();
+
+            // Path 2: Adjust Heading to face goal
+            Path2 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(90.000, 100.000),
+                                    new Pose(90.000, 100.000)
+                            )
+                    ).setLinearHeadingInterpolation(Math.toRadians(112), Math.toRadians(45))
+                    .build();
+
+            // Path 3: Shooting Spot -> Align with Sample 1
+            Path3 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(90.000, 100.000),
+                                    new Pose(104.000, 91.000)
+                            )
+                    ).setTangentHeadingInterpolation()
+                    .build();
+
+            // Path 4: Drive THROUGH Sample 1 (Intake ON)
+            Path4 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(104.000, 91.000),
+                                    new Pose(125.000, 91.000)
+                            )
+                    ).setTangentHeadingInterpolation()
+                    .build();
+
+            // Path 5: Return to Shoot
+            // .setReversed() means the robot drives backwards
+            Path5 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(125.000, 91.000),
+                                    new Pose(90.000, 100.000)
+                            )
+                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(45))
+                    .setReversed()
+                    .build();
+
+            // Path 6: Shoot -> Align with Sample 2
+            Path6 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(90.000, 100.000),
+                                    new Pose(104.000, 66.000)
+                            )
+                    ).setTangentHeadingInterpolation()
+                    .build();
+
+            // Path 7: Drive THROUGH Sample 2 (Intake ON)
+            Path7 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(104.000, 66.000),
+                                    new Pose(125.000, 66.000)
+                            )
+                    ).setTangentHeadingInterpolation()
+                    .build();
+
+            // Path 8: Return to Shoot final time
+            Path8 = follower.pathBuilder().addPath(
+                            new BezierLine(
+                                    new Pose(125.000, 66.000),
+                                    new Pose(90.000, 100.000)
+                            )
+                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(45))
+                    .build();
         }
     }
 }

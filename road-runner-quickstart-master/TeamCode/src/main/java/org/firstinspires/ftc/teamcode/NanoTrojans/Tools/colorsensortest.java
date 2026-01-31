@@ -2,58 +2,44 @@ package org.firstinspires.ftc.teamcode.NanoTrojans.Tools;
 
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-
 import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
 
 @TeleOp(name ="colorsensortest", group = "TeleOp")
 public class colorsensortest extends OpMode {
-    colorsensors bench = new colorsensors();
-    colorsensors.DetectedColor left;
-    colorsensors.DetectedColor right;
-      colorsensors.DetectedColor back;
 
-    colorsensors.DetectedColor detectcolor;
-//    colorsensors.DetectedColor detectedColor;
-//    colorsensors.
+    colorsensors bench = new colorsensors();
 
     @Override
     public void init(){
         bench.init(hardwareMap);
-
     }
+
     @Override
     public void loop(){
-//        telemetry.addData("left ", bench.getDetectedColor(telemetry));
-//        telemetry.addData("right", bench.getrightcolor(telemetry));
-//        telemetry.addData("front", bench.getbackcolor(telemetry));
+        telemetry.addData("Status", "Running Test...");
+        telemetry.addLine("-----------------------");
 
-//       bench.getDetectedColor(telemetry);
-//       bench.getrightcolor(telemetry);
-//       bench.getbackcolor(telemetry);
+        // 1. Process Left Sensor
+        displaySensorInfo("LEFT", bench.left);
 
-        left = bench.getDetectedColor(telemetry);
-        right = bench.getrightcolor(telemetry);
+        // 2. Process Right Sensor
+        displaySensorInfo("RIGHT", bench.right);
 
-        back = bench.getbackcolor(telemetry);
-
-        telemetry.addData("Left color", left);
-        telemetry.addData("Right color", right);
-        telemetry.addData("Back color", back);
-
-        telemetry.addData("Detect by hue", "----------");
-        float lefthue = bench.getHueValue(bench.left,telemetry);
-        float righthue = bench.getHueValue(bench.right,telemetry);
-        float backhue = bench.getHueValue(bench.back,telemetry);
-
-        telemetry.addData("Left color", "%s, Hue=%.2f" , bench.detectByHue(lefthue, telemetry),lefthue);
-        telemetry.addData("Right color", "%s,Hue=%.2f" ,bench.detectByHue(righthue, telemetry),righthue);
-        telemetry.addData("Back color", "%s,Hue=%.2f" , bench.detectByHue(backhue, telemetry),backhue);
-
-        telemetry.addData("Detect by hue 2", "----------");
-        telemetry.addData("Left Color", bench.detectByHue(bench.left, telemetry));
-        telemetry.addData("right Color", bench.detectByHue(bench.right, telemetry));
-        telemetry.addData("back Color", bench.detectByHue(bench.back, telemetry));
+        // 3. Process Back Sensor
+        displaySensorInfo("BACK", bench.back);
 
         telemetry.update();
+    }
+
+    // Helper method to keep the loop clean
+    public void displaySensorInfo(String name, com.qualcomm.robotcore.hardware.NormalizedColorSensor sensor) {
+        // Get the data from the library
+        colorsensors.DetectedColor color = bench.detectByHue(sensor, telemetry);
+        float hue = bench.getHue(sensor);
+        int[] rgb = bench.getRGB(sensor);
+
+        // Format and Print
+        telemetry.addData(name, "%s | Hue: %.1f | RGB: %d, %d, %d",
+                color, hue, rgb[0], rgb[1], rgb[2]);
     }
 }
