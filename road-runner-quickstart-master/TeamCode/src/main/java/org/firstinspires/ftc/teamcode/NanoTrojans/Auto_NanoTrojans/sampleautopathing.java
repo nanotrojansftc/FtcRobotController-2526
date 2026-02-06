@@ -15,7 +15,7 @@ import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
 
 
 
-@Autonomous(name = "Test: Auto Pathing Only", group = "Test")
+@Autonomous(name = "FARLEAVEBLUE-MATCH3")
 public class sampleautopathing extends OpMode {
 
     private Follower follower;
@@ -33,13 +33,11 @@ public class sampleautopathing extends OpMode {
     private PathState pathState;
 
     // --- Poses ---
-    private final Pose startPose = new Pose(88.000, 8.000, Math.toRadians(90));
-    private final Pose waypointPose = new Pose(72, 96.00, Math.toRadians(90)); // Old "Shooting Pose"
-    private final Pose endPose = new Pose(108.83, 84.41, Math.toRadians(180)); // Old "Load Pose"
+    private final Pose startPose = new Pose(88, 8.000, Math.toRadians(90));
+    private final Pose waypointPose = new Pose(88, 28, Math.toRadians(90)); // Old "Shooting Pose"
 
     // --- Paths ---
     private PathChain path1_StartToWaypoint;
-    private PathChain path2_WaypointToEnd;
 
     public void buildPaths() {
         // Path 1: Start -> Waypoint
@@ -48,11 +46,6 @@ public class sampleautopathing extends OpMode {
                 .setLinearHeadingInterpolation(startPose.getHeading(), waypointPose.getHeading())
                 .build();
 
-        // Path 2: Waypoint -> End
-        path2_WaypointToEnd = follower.pathBuilder()
-                .addPath(new BezierLine(waypointPose, endPose))
-                .setLinearHeadingInterpolation(waypointPose.getHeading(), endPose.getHeading())
-                .build();
     }
 
     public void stateMachineUpdate() {
@@ -61,15 +54,6 @@ public class sampleautopathing extends OpMode {
                 // Command the path once, then switch state
                 if (!follower.isBusy()) { // Safety check ensures we don't spam commands
                     follower.followPath(path1_StartToWaypoint, true);
-                    setPathState(PathState.WAIT_AT_WAYPOINT);
-                }
-                break;
-
-            case WAIT_AT_WAYPOINT:
-                // Wait until robot finishes path AND 2 seconds have passed
-                // The 2 seconds lets you see if the Relocalizer "snaps" the robot into place
-                if (!follower.isBusy() && pathTimer.getElapsedTimeSeconds() > 2.0) {
-                    follower.followPath(path2_WaypointToEnd, true);
                     setPathState(PathState.DRIVE_TO_END);
                 }
                 break;
@@ -102,7 +86,6 @@ public class sampleautopathing extends OpMode {
         follower.setPose(startPose);
 
         // 2. Setup Limelight Relocalizer
-        relocalizer = new PedroLimelightRelocalizer(follower, hardwareMap);
 
         // 3. Build Paths
         buildPaths();
@@ -120,7 +103,6 @@ public class sampleautopathing extends OpMode {
     public void loop() {
         // Essential Updates
         follower.update();
-        relocalizer.update(); // Keeps correcting X/Y while driving
 
         // Logic
         stateMachineUpdate();

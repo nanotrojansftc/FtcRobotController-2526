@@ -2,193 +2,98 @@ package org.firstinspires.ftc.teamcode.NanoTrojans.Subsystems;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 import com.qualcomm.robotcore.hardware.Servo;
-import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.hardware.limelightvision.LLResult;
-import com.qualcomm.robotcore.util.ElapsedTime;
-import org.firstinspires.ftc.teamcode.NanoTrojans.Lib_NanoTrojans.colorsensors;
+import org.firstinspires.ftc.robotcore.external.Telemetry;
 
 public class ShooterSubsystem {
-    // Hardware
-    private DcMotorEx lFlywheel, rFlywheel, spindexer;
-    private Servo llift, rlift, hood;
-    private Limelight3A limelight;
-    private colorsensors bench;
+    private DcMotorEx LflywheelMotor, RflywheelMotor;
+    private Servo hoodServo;
+    private Telemetry telemetry;
 
-    // State Machine
-    public enum ShootState { IDLE, PREP_SORT, SPIN_UP, FIRING, ROTATING_NEXT, FINISHED }
-    private ShootState currentState = ShootState.IDLE;
+    // --- CONSTANTS FROM YOUR ORIGINAL CODE ---
+    private final double SERVO_LOW_POS = 0.5, SERVO_HIGH_POS = 0.58;
+    private final double SERVO_THRESHOLD_DIST = 90.0;
+    private final double CAMERA_HEIGHT_INCHES = 16.25, TAG_HEIGHT_INCHES = 29.5;
+    private final double MOUNT_ANGLE_DEGREES = 10.6, SHOOTER_HEIGHT = 17.7;
+    private final double BASKET_HEIGHT = 43.0, ENTRY_ANGLE = -45.0, G = 386.1;
+    private final double FLYWHEEL_TICKS_PER_REV = 28.0, FLYWHEEL_RADIUS = 1.89, SPEED_SCALAR = 2.8;
 
-    // Physics & PID Constants from Victor's Code
-    private final double TICKS_PER_COMPARTMENT = 250.5;
-    private final double RPM_TOLERANCE = 150.0;
-    private final double FLYWHEEL_RADIUS = 1.89;
-    private final double FLYWHEEL_TICKS_PER_REV = 28.0;
-    private final double SPEED_SCALAR = 3.0;
-    private static final double G = 386.1; // Gravity in inches/sec^2
+    public ShooterSubsystem(HardwareMap hardwareMap, Telemetry telemetry) {
+        this.telemetry = telemetry;
 
-    // Operational Variables
-    private double targetVel = 0;
-    private int obeliskTarget = -1;
-    private int currentSpindexerSlot = 0;
-    private ElapsedTime stateTimer = new ElapsedTime();
-    private int shotsFired = 0;
+        LflywheelMotor = hardwareMap.get(DcMotorEx.class, "lgun");
+        RflywheelMotor = hardwareMap.get(DcMotorEx.class, "rgun");
+        hoodServo = hardwareMap.get(Servo.class, "hood");
 
-    public ShooterSubsystem(HardwareMap hwMap) {
-        lFlywheel = hwMap.get(DcMotorEx.class, "lgun");
-        rFlywheel = hwMap.get(DcMotorEx.class, "rgun");
-        spindexer = hwMap.get(DcMotorEx.class, "spindexer");
-        llift = hwMap.get(Servo.class, "llift");
-        rlift = hwMap.get(Servo.class, "rlift");
-        hood = hwMap.get(Servo.class, "hood");
+        LflywheelMotor.setDirection(DcMotorSimple.Direction.FORWARD);
+        RflywheelMotor.setDirection(DcMotorSimple.Direction.REVERSE);
 
-        limelight = hwMap.get(Limelight3A.class, "limelight");
-        bench = new colorsensors();
-        bench.init(hwMap);
+        PIDFCoefficients tunedPIDF = new PIDFCoefficients(70, 0, 1.5, 13.5);
+        LflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, tunedPIDF);
+        RflywheelMotor.setPIDFCoefficients(DcMotor.RunMode.RUN_USING_ENCODER, tunedPIDF);
+
+        LflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        RflywheelMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
     }
 
-    public void update(int obeliskId) {
-        this.obeliskTarget = obeliskId;
-
-        switch (currentState) {
-            case IDLE:
-                stopAll();
-                break;
-
-            case PREP_SORT:
-                if (alignChambersForGoal()) {
-                    stateTimer.reset();
-                    currentState = ShootState.SPIN_UP;
-                }
-                break;
-
-            case SPIN_UP:
-                autoAimAndPrep();
-                // Settling time check from FarRedAuto logic
-                if (isFlywheelReady() && stateTimer.milliseconds() > 300) {
-                    stateTimer.reset();
-                    currentState = ShootState.FIRING;
-                }
-                break;
-
-            case FIRING:
-                // Command Lifts Up
-                llift.setPosition(0.625);
-                rlift.setPosition(0.3);
-
-                // Victor's timing for launch
-                if (stateTimer.milliseconds() > 400) {
-                    shotsFired += 2;
-                    stateTimer.reset();
-                    currentState = ShootState.ROTATING_NEXT;
-                }
-                break;
-
-            case ROTATING_NEXT:
-                // Command Lifts Down
-                llift.setPosition(1.0);
-                rlift.setPosition(0.005);
-
-                if (shotsFired >= 3) {
-                    currentState = ShootState.FINISHED;
-                } else if (stateTimer.milliseconds() > 500) {
-                    // Index next slot
-                    currentSpindexerSlot++;
-                    double targetPos = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
-
-                    // Controlled Spindexer Power
-                    double error = targetPos - spindexer.getCurrentPosition();
-                    if (Math.abs(error) < 15) {
-                        spindexer.setPower(0);
-                        stateTimer.reset();
-                        currentState = ShootState.SPIN_UP;
-                    } else {
-                        spindexer.setPower(0.4 * Math.signum(error));
-                    }
-                }
-                break;
-
-            case FINISHED:
-                stopAll();
-                currentState = ShootState.IDLE;
-                break;
-        }
-    }
-
-    private boolean alignChambersForGoal() {
-        colorsensors.DetectedColor left = bench.detectByHue(bench.left, null);
-        colorsensors.DetectedColor right = bench.detectByHue(bench.right, null);
-        boolean isMatch = false;
-
-        // Sorting Logic based on Obelisk Tags 21-23
-        switch (obeliskTarget) {
-            case 21: // GPP
-                isMatch = (left == colorsensors.DetectedColor.GREEN || right == colorsensors.DetectedColor.GREEN);
-                break;
-            case 22: // PGP
-                isMatch = (left == colorsensors.DetectedColor.PURPLE && right == colorsensors.DetectedColor.GREEN);
-                break;
-            case 23: // PPG
-                isMatch = (left == colorsensors.DetectedColor.PURPLE && right == colorsensors.DetectedColor.PURPLE);
-                break;
-            default: return true;
-        }
-
-        if (isMatch) {
-            spindexer.setPower(0);
-            return true;
-        }
-        spindexer.setPower(0.3);
-        return false;
-    }
-
-    private void autoAimAndPrep() {
-        LLResult result = limelight.getLatestResult();
+    /**
+     * The "Brain" of the subsystem. Call this in your loop with the latest Limelight data.
+     */
+    public void update(LLResult result) {
         if (result != null && result.isValid()) {
             double ty = result.getTy();
-            double angleToGoalRadians = Math.toRadians(10.6 + ty); // MOUNT_ANGLE
-            double currentDist = (29.5 - 16.25) / Math.tan(angleToGoalRadians); // Distance formula
+            double angleToGoalRadians = Math.toRadians(MOUNT_ANGLE_DEGREES + ty);
+            double currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
 
-            // Servo threshold
-            hood.setPosition(currentDist < 90.0 ? 0.5 : 0.58);
+            ShotData shot = calculateShot(currentDist, BASKET_HEIGHT - SHOOTER_HEIGHT, ENTRY_ANGLE);
 
-            // Physics Trajectory
-            double x = currentDist;
-            double y = 43.0 - 17.7; // Basket - Shooter Height
-            double thetaRad = Math.toRadians(-45); // Entry Angle
+            if (shot.isPossible) {
+                double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS) * SPEED_SCALAR;
+                double ticks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
 
-            double alphaRad = Math.atan((2 * y / x) - Math.tan(thetaRad));
-            double cosAlpha = Math.cos(alphaRad);
-            double tanAlpha = Math.tan(alphaRad);
+                hoodServo.setPosition(currentDist < SERVO_THRESHOLD_DIST ? SERVO_LOW_POS : SERVO_HIGH_POS);
 
-            double denominator = 2 * Math.pow(cosAlpha, 2) * ((x * tanAlpha) - y);
+                // Distance compensation from your code
+                double leftTicks = (currentDist > 120.0) ? ticks * 1.80 : ticks;
 
-            if (denominator > 0) {
-                double launchVel = Math.sqrt((G * Math.pow(x, 2)) / denominator);
-                double targetRPM = (launchVel * 60) / (2 * Math.PI * FLYWHEEL_RADIUS) * SPEED_SCALAR;
-                targetVel = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
+                LflywheelMotor.setVelocity(leftTicks);
+                RflywheelMotor.setVelocity(ticks);
 
-                lFlywheel.setVelocity(targetVel);
-                rFlywheel.setVelocity(targetVel);
+                telemetry.addData("Shooter", "LOCKED - Dist: %.1f", currentDist);
+                telemetry.addData("Target RPM", "%.0f", targetRPM);
             }
+        } else {
+            stop(); // Or maintain state depending on preference
         }
     }
 
-    private boolean isFlywheelReady() {
-        return Math.abs(lFlywheel.getVelocity() - targetVel) < RPM_TOLERANCE;
+    public void stop() {
+        LflywheelMotor.setVelocity(0);
+        RflywheelMotor.setVelocity(0);
+        hoodServo.setPosition(SERVO_LOW_POS);
     }
 
-    public void startSequence() {
-        shotsFired = 0;
-        currentState = ShootState.PREP_SORT;
+    private ShotData calculateShot(double x, double y, double theta) {
+        ShotData data = new ShotData();
+        double thetaRad = Math.toRadians(theta);
+        double alphaRad = Math.atan(((2 * y) / x) - Math.tan(thetaRad));
+        double denominator = 2 * Math.pow(Math.cos(alphaRad), 2) * ((x * Math.tan(alphaRad)) - y);
+
+        if (denominator <= 0) {
+            data.isPossible = false;
+        } else {
+            data.isPossible = true;
+            data.launchVelocityInchesPerSec = Math.sqrt((G * Math.pow(x, 2)) / denominator);
+        }
+        return data;
     }
 
-    public void stopAll() {
-        lFlywheel.setVelocity(0);
-        rFlywheel.setVelocity(0);
-        spindexer.setPower(0);
-        llift.setPosition(1.0);
-        rlift.setPosition(0.005);
+    private static class ShotData {
+        public double launchVelocityInchesPerSec;
+        public boolean isPossible;
     }
 }

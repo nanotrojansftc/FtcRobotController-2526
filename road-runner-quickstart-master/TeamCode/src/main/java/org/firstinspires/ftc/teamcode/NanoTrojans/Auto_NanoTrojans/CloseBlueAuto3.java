@@ -30,8 +30,8 @@ import org.firstinspires.ftc.teamcode.pedroPathing.Constants;
  * ==========================================================================================
  */
 
-@Autonomous(name = "Close Red Auto-Meet3", group = "Competition")
-public class CloseRedAuto3 extends LinearOpMode {
+@Autonomous(name = "Close Blue Auto-Meet3", group = "Competition")
+public class CloseBlueAuto3 extends LinearOpMode {
 
     // --- HARDWARE ---
     private Follower follower;
@@ -395,67 +395,71 @@ public class CloseRedAuto3 extends LinearOpMode {
 
         public Paths(Follower follower) {
 
-            // Path 1: Start (Top Right) -> Shooting Spot
+            // Path 1: Start -> Shooting Spot
+            // Y: 144 - 100 = 44 | Heading: -36.4 to -112
             Path1 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(122.600, 122.000),
-                                    new Pose(90.000, 100.000)
+                                    new Pose(122.600, 22.000),
+                                    new Pose(90.000, 44.000)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(36.4), Math.toRadians(112))
+                    ).setLinearHeadingInterpolation(Math.toRadians(-36.4), Math.toRadians(-112))
                     .build();
 
             // Path 2: Adjust Heading to face goal
+            // Heading: -112 to -45
             Path2 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(90.000, 100.000),
-                                    new Pose(90.000, 100.000)
+                                    new Pose(90.000, 44.000),
+                                    new Pose(90.000, 44.000)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(112), Math.toRadians(45))
+                    ).setLinearHeadingInterpolation(Math.toRadians(-112), Math.toRadians(-45))
                     .build();
 
             // Path 3: Shooting Spot -> Align with Sample 1
+            // Y: 144 - 91 = 53
             Path3 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(90.000, 100.000),
-                                    new Pose(104.000, 91.000)
+                                    new Pose(90.000, 44.000),
+                                    new Pose(104.000, 53.000)
                             )
                     ).setTangentHeadingInterpolation()
                     .build();
 
-            // Path 4: Drive THROUGH Sample 1 (Intake ON)
+            // Path 4: Drive THROUGH Sample 1
             Path4 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(104.000, 91.000),
-                                    new Pose(125.000, 91.000)
+                                    new Pose(104.000, 53.000),
+                                    new Pose(125.000, 53.000)
                             )
                     ).setTangentHeadingInterpolation()
                     .build();
 
             // Path 5: Return to Shoot
-            // .setReversed() means the robot drives backwards
+            // Heading: 0 to -45
             Path5 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(125.000, 91.000),
-                                    new Pose(90.000, 100.000)
+                                    new Pose(125.000, 53.000),
+                                    new Pose(90.000, 44.000)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(45))
+                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(-45))
                     .setReversed()
                     .build();
 
             // Path 6: Shoot -> Align with Sample 2
+            // Y: 144 - 66 = 78
             Path6 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(90.000, 100.000),
-                                    new Pose(104.000, 66.000)
+                                    new Pose(90.000, 44.000),
+                                    new Pose(104.000, 78.000)
                             )
                     ).setTangentHeadingInterpolation()
                     .build();
 
-            // Path 7: Drive THROUGH Sample 2 (Intake ON)
+            // Path 7: Drive THROUGH Sample 2
             Path7 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(104.000, 66.000),
-                                    new Pose(125.000, 66.000)
+                                    new Pose(104.000, 78.000),
+                                    new Pose(125.000, 78.000)
                             )
                     ).setTangentHeadingInterpolation()
                     .build();
@@ -463,10 +467,10 @@ public class CloseRedAuto3 extends LinearOpMode {
             // Path 8: Return to Shoot final time
             Path8 = follower.pathBuilder().addPath(
                             new BezierLine(
-                                    new Pose(125.000, 66.000),
-                                    new Pose(90.000, 100.000)
+                                    new Pose(125.000, 78.000),
+                                    new Pose(90.000, 44.000)
                             )
-                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(45))
+                    ).setLinearHeadingInterpolation(Math.toRadians(0), Math.toRadians(-45))
                     .build();
         }
     }

@@ -33,6 +33,9 @@ public class TeleOpAutomation extends LinearOpMode {
     private ColorSensor intakeSensor;
 
     // --- CONSTANTS ---
+
+    private double currentDist = 0; // Class-level to share with telemetry
+    private double RPM_OFFSET = 100.0; // Your adjustable offset
     final double SPINDEXER_KP = 0.003;
     final double SPINDEXER_KF = 0.075;
     final double TICKS_PER_COMPARTMENT = 250.5;
@@ -73,6 +76,10 @@ public class TeleOpAutomation extends LinearOpMode {
     private Control_Base_NT driveControl;
 
     private boolean liftIsUp = false;
+
+    private double currentDistanceToTag = 0;
+
+    private boolean yWasPressed = false;
 
     @Override
     public void runOpMode() throws InterruptedException {
@@ -115,6 +122,20 @@ public class TeleOpAutomation extends LinearOpMode {
             // --- E. TELEMETRY ---
             telemetry.addData("Intake State", intakeState);
             telemetry.addData("Shoot State", shootState);
+
+            // Distance from Limelight
+            telemetry.addData("Dist to Tag (in)", "%.2f", currentDistanceToTag);
+
+            // Left Motor RPM (Target vs Actual)
+            double leftTargetRPM = (targetLeftVel / FLYWHEEL_TICKS_PER_REV) * 60.0;
+            double leftActualRPM = (LflywheelMotor.getVelocity() / FLYWHEEL_TICKS_PER_REV) * 60.0;
+            telemetry.addData("L-Gun RPM", "T: %.0f | A: %.0f", leftTargetRPM, leftActualRPM);
+
+            // Right Motor RPM (Target vs Actual)
+            double rightTargetRPM = (targetRightVel / FLYWHEEL_TICKS_PER_REV) * 60.0;
+            double rightActualRPM = (RflywheelMotor.getVelocity() / FLYWHEEL_TICKS_PER_REV) * 60.0;
+            telemetry.addData("R-Gun RPM", "T: %.0f | A: %.0f", rightTargetRPM, rightActualRPM);
+
             telemetry.addData("Lift Safe?", isLiftSafeToSpin());
             telemetry.update();
         }
@@ -128,10 +149,7 @@ public class TeleOpAutomation extends LinearOpMode {
         if (gamepad2.left_bumper) {
             shootState = ShootState.STOPPED;
             stopShooterHardware();
-
-            // Resets lifts immediately so they are down before we start intake
             resetLifts();
-
             intakeState = IntakeState.SCANNING;
             spindexerCooldown.reset();
         }
@@ -146,7 +164,6 @@ public class TeleOpAutomation extends LinearOpMode {
         if (gamepad2.left_trigger > 0.1) {
             intakeState = IntakeState.STOPPED;
             intakeMotor.setPower(0);
-
             if (shootState == ShootState.STOPPED) {
                 shootState = ShootState.AIMING_AND_SPINUP;
                 limelight.pipelineSwitch(0);
@@ -160,19 +177,43 @@ public class TeleOpAutomation extends LinearOpMode {
             resetLifts();
         }
 
-        // 5. Dpad Down - MANUAL RESET
-        if (gamepad2.dpad_down) {
+        // 5. MANUAL RESET CONTROLS (Dpad Down & Button B)
+        if (gamepad2.dpad_down || gamepad2.b) {
             resetLifts();
         }
 
-        // 6. Left Stick Y - MANUAL REVERSE (Unjam)
-        // Up on stick is usually negative Y
-        if (gamepad2.left_stick_y < -0.1) {
+        // --- 6. LEFT STICK Y - RAW MANUAL SPINDEXER NUDGE ---
+        // Changed to left_stick_y as you requested
+        double spindexerNudge = -gamepad2.left_stick_y;
+        if (Math.abs(spindexerNudge) > 0.1) {
+            if (liftIsUp) {
+                resetLifts();
+            } else {
+                // Raw power: no PID interference
+                spindexerMotor.setPower(spindexerNudge * 0.3);
+            }
+        }
+
+        // --- 7. BUTTON Y - CALIBRATE "HOME" ---
+        // Changed to gamepad2.y and yWasPressed
+        if (gamepad2.y) {
+            if (!yWasPressed) {
+                spindexerMotor.setPower(0);
+                spindexerMotor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+                spindexerMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                currentSpindexerSlot = 0;
+                gamepad2.rumble(500);
+                yWasPressed = true;
+            }
+        } else {
+            yWasPressed = false;
+        }
+
+        // --- 8. RIGHT STICK Y - MANUAL INTAKE (REVERSE/FORWARD) ---
+        // Changed to right_stick_y as you requested
+        if (Math.abs(gamepad2.right_stick_y) > 0.1) {
             intakeState = IntakeState.STOPPED;
-            intakeMotor.setPower(gamepad2.left_stick_y); // Negative power (reverse)
-        } else if (gamepad2.left_stick_y > 0.1) {
-            intakeState = IntakeState.STOPPED;
-            intakeMotor.setPower(gamepad2.left_stick_y); // Manual Forward
+            intakeMotor.setPower(gamepad2.right_stick_y);
         } else if (intakeState == IntakeState.STOPPED) {
             intakeMotor.setPower(0);
         }
@@ -189,6 +230,8 @@ public class TeleOpAutomation extends LinearOpMode {
                 // Only index if cooldown passed AND lifts are physically safe
                 if (spindexerCooldown.milliseconds() > 1000 && isLiftSafeToSpin()) {
                     if (intakeHasSample()) {
+                        gamepad2.rumble(250);
+                        gamepad1.rumble(250);
                         currentSpindexerSlot++;
                         sleep(200);  //give sometime before rotate
                         intakeState = IntakeState.INDEXING;
@@ -349,34 +392,28 @@ public class TeleOpAutomation extends LinearOpMode {
     }
 
     private void applyPIDToSpindexer() {
-        // SAFETY OVERRIDE:
-        // If the lifts were commanded down recently, DO NOT MOVE Spindexer.
-        // This prevents the carousel from hitting the lifts while they are lowering.
-        /*if (!isLiftSafeToSpin()) {
-            spindexerMotor.setPower(0);
+        // UPDATED: Check for LEFT stick and Y button
+        if (Math.abs(gamepad2.left_stick_y) > 0.1 || gamepad2.y) {
             return;
-        }*/
-        if(liftIsUp) {
+        }
+
+        if (liftIsUp) {
             spindexerMotor.setPower(0);
             return;
         }
 
+        // Standard Automation PID Logic
         double preciseTarget = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
-        spindexerTargetPos = (int) Math.round(preciseTarget);
-
         int currentPos = spindexerMotor.getCurrentPosition();
-        double error = spindexerTargetPos - currentPos;
+        double error = preciseTarget - currentPos;
 
-        if (Math.abs(error) < 5) {
+        if (Math.abs(error) < 3) {
             spindexerMotor.setPower(0);
             return;
         }
 
-        double pTerm = error * SPINDEXER_KP;
-        double fTerm = Math.signum(error) * SPINDEXER_KF;
-        double power = pTerm + fTerm;
-        power = Math.max(-0.6, Math.min(0.6, power));
-
+        double power = (error * SPINDEXER_KP) + (Math.signum(error) * SPINDEXER_KF);
+        power = Math.max(-0.45, Math.min(0.45, power));
         spindexerMotor.setPower(power);
     }
 
@@ -412,7 +449,9 @@ public class TeleOpAutomation extends LinearOpMode {
         if (result != null && result.isValid()) {
             double ty = result.getTy();
             double angleToGoalRadians = Math.toRadians(MOUNT_ANGLE_DEGREES + ty);
-            double currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
+
+            // Update class variable for telemetry
+            currentDist = (TAG_HEIGHT_INCHES - CAMERA_HEIGHT_INCHES) / Math.tan(angleToGoalRadians);
 
             double heightY = BASKET_HEIGHT - SHOOTER_HEIGHT;
             ShotData shot = calculateShot(currentDist, heightY, -45);
@@ -421,12 +460,19 @@ public class TeleOpAutomation extends LinearOpMode {
                 if (currentDist < 90.0) hoodServo.setPosition(0.5);
                 else hoodServo.setPosition(0.58);
 
+                // 1. Calculate base RPM from physics
                 double targetRPM = (shot.launchVelocityInchesPerSec * 60) / (2 * Math.PI * FLYWHEEL_RADIUS);
-                targetRPM *= SPEED_SCALAR;
+
+                // 2. Apply scaling and your new OFFSET
+                targetRPM = (targetRPM * SPEED_SCALAR) - RPM_OFFSET;
+
+                // 3. Convert final RPM to encoder ticks
                 double velTicks = (targetRPM / 60.0) * FLYWHEEL_TICKS_PER_REV;
 
                 targetLeftVel = velTicks;
                 targetRightVel = velTicks;
+
+                // Long range compensation
                 if (currentDist > 120.0) targetLeftVel *= 1.80;
 
                 LflywheelMotor.setVelocity(targetLeftVel);
