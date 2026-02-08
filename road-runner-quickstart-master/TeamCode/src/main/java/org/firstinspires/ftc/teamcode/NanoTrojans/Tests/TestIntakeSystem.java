@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode.NanoTrojans.Tests;
 
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
-import org.firstinspires.ftc.teamcode.NanoTrojans.Subsystems.IntakeSubsystem;
+import org.firstinspires.ftc.teamcode.NanoTrojans.SubSytems.IntakeSubsystem;
 
 @Autonomous(name = "Test: Smart Intake", group = "Diagnostics")
 public class TestIntakeSystem extends LinearOpMode {

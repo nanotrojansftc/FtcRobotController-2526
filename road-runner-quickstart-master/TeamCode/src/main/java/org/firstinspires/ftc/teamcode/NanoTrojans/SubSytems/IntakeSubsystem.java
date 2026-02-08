@@ -1,4 +1,4 @@
-package org.firstinspires.ftc.teamcode.NanoTrojans.Subsystems;
+package org.firstinspires.ftc.teamcode.NanoTrojans.SubSytems;
 
 import com.qualcomm.robotcore.hardware.ColorSensor;
 import com.qualcomm.robotcore.hardware.DcMotor;
@@ -13,18 +13,25 @@ public class IntakeSubsystem {
     private ColorSensor intakeSensor;
     private colorsensors bench;
 
-    private final double SPINDEXER_KP = 0.003;
-    private final double SPINDEXER_KF = 0.075;
-    private final double TICKS_PER_COMPARTMENT = 250.5;
+    // --- PIDF CONSTANTS (Exactly matched to your Tuner) ---
+    private double kP = 0.002;
+    private double kF = 0.05;
+    private double kD = 0.000;
+    private double ticksPerCompartment = 250.6;
 
+    // --- SETTINGS ---
+    private final double SETTLE_TIME_MS = 350;
+    private final int EXIT_TOLERANCE = 5; // Matches Tuner friction deadzone
+
+    // --- STATE ---
     private int currentSpindexerSlot = 0;
     private boolean isIndexing = false;
-    private boolean lastSensorState = false; // To detect False -> True transition
+    private boolean lastSensorState = false;
     private int artifactsIntaken = 0;
+    private double lastError = 0;
 
     private ElapsedTime intakeSettlingTimer = new ElapsedTime();
     private boolean waitingForSettle = false;
-    private final double SETTLE_TIME_MS = 350;
     private ElapsedTime spindexerCooldown = new ElapsedTime();
 
     public IntakeSubsystem(HardwareMap hwMap) {
@@ -44,11 +51,11 @@ public class IntakeSubsystem {
     public void runIntakeAutomation(boolean liftIsUp) {
         boolean currentSensorState = artifactDetectedAtIntake();
 
-        // Detect TRANSITION from False to True
+        // Detect transitions to count artifacts
         if (currentSensorState && !lastSensorState) {
-            artifactsIntaken++; // Increment the "Intook One" counter
+            artifactsIntaken++;
         }
-        lastSensorState = currentSensorState; // Update for next loop
+        lastSensorState = currentSensorState;
 
         if (isFullyLoaded() || currentSpindexerSlot >= 3) {
             stopIntake();
@@ -56,12 +63,11 @@ public class IntakeSubsystem {
         }
 
         if (isIndexing) {
-            intakeMotor.setPower(0);
+            intakeMotor.setPower(0); // Intake remains OFF during rotation
             applySpindexerPID(liftIsUp);
         } else {
             intakeMotor.setPower(1.0);
 
-            // Logic: Must see artifact, bench must have room, and must not be in 1s cooldown
             if (currentSensorState && !isBenchFull() && spindexerCooldown.milliseconds() > 1000) {
                 if (!waitingForSettle) {
                     intakeSettlingTimer.reset();
@@ -85,52 +91,73 @@ public class IntakeSubsystem {
             return;
         }
 
-        double preciseTarget = currentSpindexerSlot * TICKS_PER_COMPARTMENT;
-        double error = preciseTarget - spindexerMotor.getCurrentPosition();
+        // 1. Calculate target using the Tuner's rounding logic
+        int targetPosition = (int) Math.round(currentSpindexerSlot * ticksPerCompartment);
+        int currentPos = spindexerMotor.getCurrentPosition();
+        double error = targetPosition - currentPos;
 
-        if (Math.abs(error) < 15) {
+        // 2. Tighter Exit Condition
+        if (Math.abs(error) < EXIT_TOLERANCE) {
             spindexerMotor.setPower(0);
             isIndexing = false;
             spindexerCooldown.reset();
             return;
         }
 
-        double power = (error * SPINDEXER_KP) + (Math.signum(error) * SPINDEXER_KF);
-        power = Math.max(-0.45, Math.min(0.45, power));
+        // 3. PIDF Math from Tuner
+        double pTerm = error * kP;
+
+        // Only apply Friction power if we are outside the 5-tick deadzone
+        double fTerm = 0;
+        if (Math.abs(error) > 5) fTerm = Math.signum(error) * kF;
+
+        double dTerm = (error - lastError) * kD;
+        lastError = error;
+
+        double power = pTerm + fTerm + dTerm;
+
+        // Cap power for safety (Tuner used 1.0, we use 0.5)
+        power = Math.max(-0.5, Math.min(0.5, power));
         spindexerMotor.setPower(power);
     }
 
-    // --- SENSOR GETTERS FOR TELEMETRY ---
-
     public boolean artifactDetectedAtIntake() {
-        return getIntakeRawSum() > 300;
-    }
-
-    public int getIntakeRawSum() {
-        return intakeSensor.red() + intakeSensor.green() + intakeSensor.blue();
-    }
-
-    public boolean isLeftBenchFull() {
-        return bench.detectByHue(bench.left, null) != colorsensors.DetectedColor.UNKNOWN;
-    }
-
-    public boolean isRightBenchFull() {
-        return bench.detectByHue(bench.right, null) != colorsensors.DetectedColor.UNKNOWN;
+        return (intakeSensor.red() + intakeSensor.green() + intakeSensor.blue()) > 300;
     }
 
     public boolean isBenchFull() {
-        return isLeftBenchFull() && isRightBenchFull();
+        return (bench.detectByHue(bench.left, null) != colorsensors.DetectedColor.UNKNOWN &&
+                bench.detectByHue(bench.right, null) != colorsensors.DetectedColor.UNKNOWN);
     }
 
     public boolean isFullyLoaded() {
         return isBenchFull() && artifactDetectedAtIntake();
     }
 
-    public int getArtifactsIntakenCount() { return artifactsIntaken; }
-
     public void stopIntake() {
         intakeMotor.setPower(0);
         spindexerMotor.setPower(0);
         isIndexing = false;
+    }
+
+    public int getArtifactsIntakenCount() { return artifactsIntaken; }
+    // 1. Fixed the "getIntakeRawSum" error
+    public int getIntakeRawSum() {
+        return intakeSensor.red() + intakeSensor.green() + intakeSensor.blue();
+    }
+
+    // 2. Fixed the "isLeftBenchFull" error
+    public boolean isLeftBenchFull() {
+        return bench.detectByHue(bench.left, null) != colorsensors.DetectedColor.UNKNOWN;
+    }
+
+    // 3. Fixed the "isRightBenchFull" error
+    public boolean isRightBenchFull() {
+        return bench.detectByHue(bench.right, null) != colorsensors.DetectedColor.UNKNOWN;
+    }
+
+    // 4. Added for total awareness in the tester
+    public boolean isIndexing() {
+        return isIndexing;
     }
 }
